@@ -1,10 +1,3 @@
-This starter script sets up a clean Ubuntu instance to run a Sovereign SDK EVM rollup.
-
-Your rollup comes out of the box with log rotation, automatic restarts, and an observability stack.
-You can see full details in the sov-observability repo, but note that you can access a local
-Grafana dashboard at `localhost:3000` with username `admin` and passwod `admin123`.
-
-```
 #!/bin/bash
 # Set up a fresh ubuntu 22.04 instance to run the rollup
 
@@ -61,4 +54,4 @@ EOF
 
 # Start the rollup under systemd
 sudo systemctl daemon-reload && sudo systemctl enable rollup && sudo systemctl start rollup
-```
+
