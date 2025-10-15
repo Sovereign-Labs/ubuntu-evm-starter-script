@@ -18,7 +18,25 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y # Instal
 sudo usermod -aG docker $USER
 newgrp docker
 docker run --name postgres -e POSTGRES_PASSWORD=sequencerdb -p 5432:5432 -d postgres
-docker exec -it postgres psql -U postgres -c "CREATE DATABASE gte;"
+docker exec -it postgres psql -U postgres -c "CREATE DATABASE rollup;"
+
+# ---------- INSTALL DOCKER COMPOSE ----------
+# Add Docker's official GPG key and repository (if not already done)
+sudo apt-get update
+sudo apt-get install ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update and install the Compose plugin
+sudo apt-get update
+sudo apt-get install docker-compose-plugin
+# ------------- END DOCKER COMPOSE -----------
 
 # Setup starter repo
 git clone https://github.com/Sovereign-Labs/rollup-starter.git
@@ -28,7 +46,7 @@ cargo build --release
 cd ..
 
 # Setup the observability stack
-https://github.com/Sovereign-Labs/sov-observability.git
+git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
 make start # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
@@ -59,6 +77,5 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-# Start the rollup under systemd
 sudo systemctl daemon-reload && sudo systemctl enable rollup && sudo systemctl start rollup
 ```
