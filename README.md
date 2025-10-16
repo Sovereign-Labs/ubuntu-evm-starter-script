@@ -6,9 +6,11 @@ This is an AWS CDK project for deploying sovereign rollup infrastructure on AWS.
 
 The stack includes:
 - **VPC**: Custom VPC with public subnets across 2 availability zones
-- **EC2 Instance**: c8gd.12xlarge (ARM-based Graviton) instance running Ubuntu 22.04 LTS
+- **Auto Scaling Group**: Manages EC2 instances with automatic health monitoring
+  - Instance type: c8gd.12xlarge (ARM-based Graviton) running Ubuntu 22.04 LTS
   - 24GB GP3 root volume
   - SSH access on port 22 (currently open to all IPs)
+  - Custom health check system (see Health Check Configuration below)
 - **SSH Key Pair**: Automatically created and stored in AWS Systems Manager Parameter Store
 
 ## Prerequisites
@@ -58,6 +60,10 @@ The stack includes:
    ssh -i <KeyPairName>.pem ubuntu@<InstancePublicIp>
    ```
    Replace `<KeyPairName>` and `<InstancePublicIp>` with the values from your stack outputs.
+
+## Health Check Configuration
+
+The stack uses a custom health check system that queries `localhost:12346/healthcheck` every minute via cron and reports status directly to the Auto Scaling Group using `aws autoscaling set-instance-health`. Instances have a 15-minute grace period after launch before health checks begin. Your application must expose a health endpoint that returns HTTP 2xx when healthy. To customize: modify `HealthCheckPort` parameter (default: 12346), `MAX_NODE_SETUP_TIME_MINUTES` in the CDK stack (default: 15), or edit the health check script in `lib/health-check-script.ts`. Logs are written to `/var/log/health-check.log`.
 
 ## Useful Commands
 
