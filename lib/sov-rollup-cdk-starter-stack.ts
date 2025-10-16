@@ -40,6 +40,37 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       default: ''
     });
 
+    // Create user data script that downloads and executes the latest setup script
+    const userData = ec2.UserData.forLinux();
+    userData.addCommands(
+      '#!/bin/bash',
+      'set -e',
+      '',
+      '# Log all output to file for debugging',
+      'exec > >(tee -a /var/log/user-data.log)',
+      'exec 2>&1',
+      '',
+      'echo "Starting user data script at $(date)"',
+      '',
+      '# Install git if not present',
+      'apt-get update',
+      'apt-get install -y git curl',
+      '',
+      '# Download the latest setup script from master branch',
+      'echo "Downloading setup script from GitHub..."',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup.sh -o /tmp/setup.sh',
+      '',
+      '# Make it executable and owned by ubuntu user',
+      'chmod +x /tmp/setup.sh',
+      'chown ubuntu:ubuntu /tmp/setup.sh',
+      '',
+      '# Execute the setup script as ubuntu user with sudo privileges',
+      'echo "Executing setup script as ubuntu user..."',
+      'sudo -u ubuntu -H bash -c "sudo /tmp/setup.sh"',
+      '',
+      'echo "User data script completed at $(date)"'
+    );
+
     // Create EC2 instance
     const instance = new ec2.Instance(this, 'SovRollupInstance', {
       vpc,
@@ -47,8 +78,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       machineImage: ec2.MachineImage.fromSsmParameter(
         '/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id',
         {
-          os: ec2.OperatingSystemType.LINUX,
-          userData: ec2.UserData.forLinux()
+          os: ec2.OperatingSystemType.LINUX
         }
       ),
       securityGroup,
@@ -63,7 +93,8 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
           })
         }
       ],
-      keyName: existingKeyPairParam.valueAsString || undefined
+      keyName: existingKeyPairParam.valueAsString || undefined,
+      userData: userData
     });
 
     // Output the instance public IP
