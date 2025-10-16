@@ -11,6 +11,14 @@ set -e
 # Parse arguments
 POSTGRES_CONN_STRING="${1:-}"
 
+# Determine the target user (ubuntu if running as root, otherwise current user)
+if [ "$EUID" -eq 0 ]; then
+    TARGET_USER="ubuntu"
+else
+    TARGET_USER="$USER"
+fi
+echo "Running setup for user: $TARGET_USER"
+
 # Set file descriptor limit
 ulimit -n 65536
 sudo tee -a /etc/security/limits.conf > /dev/null << 'EOF'
@@ -21,14 +29,18 @@ EOF
 # Install system dependencies
 sudo apt update
 sudo apt install -y clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose jq
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y # Install Rust
-. "$HOME/.cargo/env"
 
-# Setup starter repo
-cd /home/ubuntu
-git clone https://github.com/Sovereign-Labs/rollup-starter.git
+# Install Rust as the target user
+echo "Installing Rust as $TARGET_USER"
+sudo -u $TARGET_USER bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+export PATH="/home/$TARGET_USER/.cargo/bin:$PATH"
+
+# Setup starter repo as target user
+echo "Cloning rollup-starter as $TARGET_USER"
+cd /home/$TARGET_USER
+sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
-git switch preston/evm-starter
+sudo -u $TARGET_USER git switch preston/evm-starter
 
 # Find the largest unmounted block device for rollup state storage
 # This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
@@ -45,25 +57,30 @@ DEVICE="/dev/$LARGEST_UNMOUNTED"
 echo "Using $DEVICE (largest unmounted block device) for rollup-state storage"
 
 # Check if rollup-state exists and is non-empty - if so, fail to prevent data loss
-if [ -d /home/ubuntu/rollup-starter/rollup-state ] && [ "$(ls -A /home/ubuntu/rollup-starter/rollup-state)" ]; then
-    echo "Error: /home/ubuntu/rollup-starter/rollup-state exists and is not empty. Aborting to prevent data loss."
+ROLLUP_STATE_DIR="/home/$TARGET_USER/rollup-starter/rollup-state"
+if [ -d "$ROLLUP_STATE_DIR" ] && [ "$(ls -A $ROLLUP_STATE_DIR)" ]; then
+    echo "Error: $ROLLUP_STATE_DIR exists and is not empty. Aborting to prevent data loss."
     exit 1
 fi
 # Remove the directory if it exists (but is empty)
-rm -rf /home/ubuntu/rollup-starter/rollup-state
-sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p /home/ubuntu/rollup-starter/rollup-state && sudo mount -o noatime "$DEVICE" /home/ubuntu/rollup-starter/rollup-state
+rm -rf "$ROLLUP_STATE_DIR"
+sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
 # Add the new directory to /etc/fstab
-echo "$DEVICE /home/ubuntu/rollup-starter/rollup-state ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+echo "$DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload
-sudo chown -R $USER /home/ubuntu/rollup-starter/rollup-state
+sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
 
 
 # Put docker's data on our newly mounted disk
-mkdir -p /home/ubuntu/rollup-starter/rollup-state/docker
+DOCKER_DATA_DIR="$ROLLUP_STATE_DIR/docker"
+mkdir -p "$DOCKER_DATA_DIR"
+# Docker daemon runs as root, but we need to ensure proper permissions
+# The docker data directory should be owned by root since docker daemon runs as root
+sudo chown -R root:root "$DOCKER_DATA_DIR"
 # Set docker data dir to
-sudo tee /etc/docker/daemon.json > /dev/null << 'EOF'
+sudo tee /etc/docker/daemon.json > /dev/null << EOF
 {
-	"data-root": "/home/ubuntu/rollup-starter/rollup-state/docker"
+	"data-root": "$DOCKER_DATA_DIR"
 }
 EOF
 
@@ -72,8 +89,8 @@ echo "Restarting docker to apply new data-root configuration"
 sudo systemctl restart docker
 
 # Add user to docker group
-echo "Adding user to docker group"
-sudo usermod -aG docker $USER
+echo "Adding $TARGET_USER to docker group"
+sudo usermod -aG docker $TARGET_USER
 
 # Setup postgres - either local or remote
 if [ -z "$POSTGRES_CONN_STRING" ]; then
@@ -91,18 +108,18 @@ if [ -z "$POSTGRES_CONN_STRING" ]; then
     POSTGRES_CONN_STRING="postgres://postgres:sequencerdb@localhost:5432/rollup"
 else
     echo "Using remote postgres: $POSTGRES_CONN_STRING"
-	# Update postgres connection string in rollup-starter config files
-	echo "Updating postgres connection string in config files"
-	cd /home/ubuntu/rollup-starter
-	find . -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
 fi
 
+# Update postgres connection string in rollup-starter config files
+echo "Updating postgres connection string in config files"
+cd /home/$TARGET_USER/rollup-starter
+find . -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
 
-# Build the rollup
-cd /home/ubuntu/rollup-starter
-echo "Building rollup"
-cargo build --release
-cd /home/ubuntu
+# Build the rollup as target user
+cd /home/$TARGET_USER/rollup-starter
+echo "Building rollup as $TARGET_USER"
+sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release'
+cd /home/$TARGET_USER
  
 # ---------- INSTALL DOCKER COMPOSE ----------
 # Add Docker's official GPG key and repository (if not already done)
@@ -123,10 +140,11 @@ sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
 
-# Setup the observability stack
-git clone https://github.com/Sovereign-Labs/sov-observability.git
+# Setup the observability stack as target user
+cd /home/$TARGET_USER
+sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
-make start # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
+sudo -u $TARGET_USER make start # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
 sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
 [Journal]
@@ -136,16 +154,16 @@ MaxRetentionSec=30day
 EOF
 sudo systemctl restart systemd-journald
 
-sudo tee /etc/systemd/system/rollup.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/rollup.service > /dev/null << EOF
 [Unit]
 Description=Rollup Service
 After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/rollup-starter
-ExecStart=/home/ubuntu/rollup-starter/target/release/rollup
+User=$TARGET_USER
+WorkingDirectory=/home/$TARGET_USER/rollup-starter
+ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup
 Restart=always
 RestartSec=10
 StandardOutput=journal
