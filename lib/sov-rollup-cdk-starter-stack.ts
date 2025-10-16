@@ -33,11 +33,9 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       'Allow SSH access from anywhere'
     );
 
-    // Add parameters for optional existing key pair
-    const existingKeyPairParam = new cdk.CfnParameter(this, 'ExistingKeyPairName', {
-      type: 'String',
-      description: 'Name of existing EC2 key pair (optional)',
-      default: ''
+    // Create a new key pair
+    const keyPair = new ec2.KeyPair(this, 'SovRollupKeyPair', {
+      keyPairName: `sov-rollup-keypair-${cdk.Stack.of(this).stackName}`
     });
 
     // Create user data script that downloads and executes the latest setup script
@@ -93,7 +91,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
           })
         }
       ],
-      keyName: existingKeyPairParam.valueAsString || undefined,
+      keyPair: keyPair,
       userData: userData
     });
 
@@ -107,6 +105,18 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'InstanceId', {
       value: instance.instanceId,
       description: 'Instance ID of the EC2 instance'
+    });
+
+    // Output the key pair name
+    new cdk.CfnOutput(this, 'KeyPairName', {
+      value: keyPair.keyPairName,
+      description: 'Name of the created SSH key pair'
+    });
+
+    // Output command to retrieve private key
+    new cdk.CfnOutput(this, 'GetPrivateKeyCommand', {
+      value: `aws ssm get-parameter --name /ec2/keypair/${keyPair.keyPairId} --region ${cdk.Stack.of(this).region} --with-decryption --query Parameter.Value --output text > ${keyPair.keyPairName}.pem && chmod 400 ${keyPair.keyPairName}.pem`,
+      description: 'Command to retrieve the private key'
     });
   }
 }
