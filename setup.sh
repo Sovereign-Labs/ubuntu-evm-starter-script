@@ -1,8 +1,15 @@
 #!/bin/bash
 # Set up a fresh ubuntu 22.04 instance to run the rollup
+#
+# Usage: setup.sh [POSTGRES_CONNECTION_STRING]
+#   If POSTGRES_CONNECTION_STRING is provided, skip local postgres setup
+#   Example: setup.sh "postgres://user:pass@host:5432/dbname"
 
 # Exit on any error
 set -e
+
+# Parse arguments
+POSTGRES_CONN_STRING="${1:-}"
 
 # Set file descriptor limit
 ulimit -n 65536
@@ -18,11 +25,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y # Instal
 . "$HOME/.cargo/env"
 
 # Setup starter repo
+cd /home/ubuntu
 git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
 git switch preston/evm-starter
-cargo build --release
-cd ..
 
 # Find the largest unmounted block device for rollup state storage
 # This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
@@ -65,19 +71,38 @@ EOF
 echo "Restarting docker to apply new data-root configuration"
 sudo systemctl restart docker
 
-# Add user to docker group and start postgres
+# Add user to docker group
 echo "Adding user to docker group"
 sudo usermod -aG docker $USER
-echo "Starting postgres container"
-sg docker -c "docker run --name postgres -e POSTGRES_PASSWORD=sequencerdb -p 5432:5432 -d --restart=always postgres"
-echo "Waiting for postgres to be ready"
-sleep 3
-until sg docker -c "docker exec postgres pg_isready -U postgres" > /dev/null 2>&1; do
-    echo "Waiting for postgres..."
-    sleep 1
-done
-echo "Creating rollup database"
-sg docker -c "docker exec postgres psql -U postgres -c 'CREATE DATABASE rollup;'"
+
+# Setup postgres - either local or remote
+if [ -z "$POSTGRES_CONN_STRING" ]; then
+    echo "No postgres connection string provided, setting up local postgres"
+    echo "Starting postgres container"
+    sg docker -c "docker run --name postgres -e POSTGRES_PASSWORD=sequencerdb -p 5432:5432 -d --restart=always postgres"
+    echo "Waiting for postgres to be ready"
+    sleep 3
+    until sg docker -c "docker exec postgres pg_isready -U postgres" > /dev/null 2>&1; do
+        echo "Waiting for postgres..."
+        sleep 1
+    done
+    echo "Creating rollup database"
+    sg docker -c "docker exec postgres psql -U postgres -c 'CREATE DATABASE rollup;'"
+    POSTGRES_CONN_STRING="postgres://postgres:sequencerdb@localhost:5432/rollup"
+else
+    echo "Using remote postgres: $POSTGRES_CONN_STRING"
+	# Update postgres connection string in rollup-starter config files
+	echo "Updating postgres connection string in config files"
+	cd /home/ubuntu/rollup-starter
+	find . -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
+fi
+
+
+# Build the rollup
+cd /home/ubuntu/rollup-starter
+echo "Building rollup"
+cargo build --release
+cd /home/ubuntu
  
 # ---------- INSTALL DOCKER COMPOSE ----------
 # Add Docker's official GPG key and repository (if not already done)
