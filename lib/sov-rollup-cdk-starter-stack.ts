@@ -1,11 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
-import * as iam from 'aws-cdk-lib/aws-iam';
+import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
-import { generateHealthCheckScript } from './health-check-script';
-
-export const MAX_NODE_SETUP_TIME_MINUTES = 15;
+import { ComputeInfrastructure } from './compute-infrastructure';
 
 export class SovRollupCdkStarterStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -21,159 +18,117 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
     // Create VPC for the rollup infrastructure
     const vpc = new ec2.Vpc(this, 'SovRollupVpc', {
       maxAzs: 2,
-      natGateways: 0, // Start with 0 NAT gateways to save costs
+      natGateways: 1, // Need at least 1 NAT gateway for private subnets
       subnetConfiguration: [
         {
           name: 'Public',
           subnetType: ec2.SubnetType.PUBLIC,
           cidrMask: 24
+        },
+        {
+          name: 'Private',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          cidrMask: 24
         }
       ]
     });
 
-    // Create security group for EC2 instances in ASG
-    const asgSecurityGroup = new ec2.SecurityGroup(this, 'SovRollupAsgSecurityGroup', {
+    // Add parameter for RDS database name
+    const dbNameParam = new cdk.CfnParameter(this, 'DatabaseName', {
+      type: 'String',
+      description: 'Name for the RDS database',
+      default: 'sovrollupdb'
+    });
+
+    // Add parameter for RDS master username
+    const dbUsernameParam = new cdk.CfnParameter(this, 'DatabaseUsername', {
+      type: 'String',
+      description: 'Master username for the RDS database',
+      default: 'dbadmin'
+    });
+
+    // Create a security group for RDS
+    const rdsSecurityGroup = new ec2.SecurityGroup(this, 'SovRollupRdsSecurityGroup', {
       vpc,
-      description: 'Security group for Sovereign Rollup Auto Scaling Group instances',
+      description: 'Security group for Sovereign Rollup RDS instance',
       allowAllOutbound: true
     });
 
-    // Allow SSH from anywhere (to be locked down later)
-    asgSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(22),
-      'Allow SSH access from anywhere'
-    );
-
-
-    // Create IAM role for EC2 instances
-    const ec2Role = new iam.Role(this, 'SovRollupEc2Role', {
-      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')
-      ],
-      inlinePolicies: {
-        // Let instances set their own health status
-        AutoScalingHealthCheck: new iam.PolicyDocument({
-          statements: [
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: [
-                'autoscaling:SetInstanceHealth',
-                'ec2:DescribeInstances'
-              ],
-              resources: ['*']
-            })
-          ]
-        })
-      }
-    });
-
-    // Create a new key pair to ssh into the instances
-    const keyPair = new ec2.KeyPair(this, 'SovRollupKeyPair', {
-      keyPairName: `sov-rollup-keypair-${cdk.Stack.of(this).stackName}`
-    });
-
-    // Create user data script that 
-    //  - downloads and executes the latest setup script
-    //  - sets up the healtcheck script to run every minute
-    const userData = ec2.UserData.forLinux();
-    userData.addCommands(
-      '#!/bin/bash',
-      'set -e',
-      '',
-      '# Log all output to file for debugging',
-      'exec > >(tee -a /var/log/user-data.log)',
-      'exec 2>&1',
-      '',
-      'echo "Starting user data script at $(date)"',
-      '',
-      '# Install dependencies',
-      'apt-get update',
-      'apt-get install -y git curl awscli',
-      '',
-      '# Download the latest setup script from master branch',
-      'echo "Downloading setup script from GitHub..."',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup.sh -o /tmp/setup.sh',
-      '',
-      '# Make it executable and owned by ubuntu user',
-      'chmod +x /tmp/setup.sh',
-      'chown ubuntu:ubuntu /tmp/setup.sh',
-      '',
-      '# Execute the setup script as ubuntu user with sudo privileges',
-      'echo "Executing setup script as ubuntu user..."',
-      'sudo -u ubuntu -H bash -c "sudo /tmp/setup.sh"',
-      '',
-      '# Create health check script',
-      `cat > /usr/local/bin/health-check.sh << 'EOF'`,
-      generateHealthCheckScript(healthCheckPortParam.valueAsString, MAX_NODE_SETUP_TIME_MINUTES),
-      'EOF',
-      '',
-      '# Make health check script executable',
-      'chmod +x /usr/local/bin/health-check.sh',
-      '',
-      '# Add cron job to run health check every minute',
-      'echo "* * * * * root /usr/local/bin/health-check.sh >> /var/log/health-check.log 2>&1" >> /etc/crontab',
-      '',
-      'echo "User data script completed at $(date)"'
-    );
-
-
-    // Create launch template
-    const launchTemplate = new ec2.LaunchTemplate(this, 'SovRollupLaunchTemplate', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C8GD, ec2.InstanceSize.XLARGE12),
-      machineImage: ec2.MachineImage.fromSsmParameter(
-        '/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id',
-        {
-          os: ec2.OperatingSystemType.LINUX
-        }
-      ),
-      securityGroup: asgSecurityGroup,
-      keyPair: keyPair,
-      userData: userData,
-      role: ec2Role,
-      blockDevices: [
-        {
-          // Use a 24 GB EBS volume for the root device. All other storage is on the attached nvme drives for c8gd instances
-          deviceName: '/dev/sda1',
-          volume: ec2.BlockDeviceVolume.ebs(24, {
-            volumeType: ec2.EbsDeviceVolumeType.GP3
-          })
-        }
-      ]
-    });
-
-    // Create an Auto Scaling Group (more instances will be added later)
-    const asg = new autoscaling.AutoScalingGroup(this, 'SovRollupAsg', {
+    // Create Aurora postgres cluster. This gives multi-AZ durability by default and should perform better than postgres.
+    const auroraCluster = new rds.DatabaseCluster(this, 'SovRollupAuroraCluster', {
+      engine: rds.DatabaseClusterEngine.auroraPostgres({
+        version: rds.AuroraPostgresEngineVersion.VER_17_5
+      }),
       vpc,
-      launchTemplate: launchTemplate,
-      minCapacity: 1,
-      maxCapacity: 1,
-      desiredCapacity: 1,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC
+      securityGroups: [rdsSecurityGroup],
+      defaultDatabaseName: dbNameParam.valueAsString,
+      credentials: rds.Credentials.fromUsername(dbUsernameParam.valueAsString),
+      writer: rds.ClusterInstance.provisioned('writer', {
+        // Use graviton3-based instances for better price/performance
+        instanceType: ec2.InstanceType.of(ec2.InstanceClass.R8G, ec2.InstanceSize.LARGE),
+        enablePerformanceInsights: true,
+        publiclyAccessible: false,
+        // Place writer in same AZ as EC2 instances for lowest latency
+        availabilityZone: cdk.Stack.of(this).availabilityZones[0]
+      }),
+      readers: [
+        // Start with one reader, can scale up later
+        rds.ClusterInstance.provisioned('reader1', {
+          instanceType: ec2.InstanceType.of(ec2.InstanceClass.R8G, ec2.InstanceSize.LARGE),
+          enablePerformanceInsights: true,
+          publiclyAccessible: false,
+          // Place reader in different AZ for high availability
+          availabilityZone: cdk.Stack.of(this).availabilityZones[1]
+        })
+      ],
+      backup: {
+        retention: cdk.Duration.days(7)
       },
-      healthChecks: autoscaling.HealthChecks.ec2({
-        gracePeriod: cdk.Duration.minutes(MAX_NODE_SETUP_TIME_MINUTES)
-      })
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // For development - change for production
+      deletionProtection: false, // For development - set to true for production
+      storageEncrypted: true,
+      // Enable enhanced monitoring for better observability
+      monitoringInterval: cdk.Duration.seconds(60),
+      // Enable backtrack for Aurora to allow point-in-time recovery
+      backtrackWindow: cdk.Duration.hours(72)
     });
-    
 
-    // Output the Auto Scaling Group name
-    new cdk.CfnOutput(this, 'AutoScalingGroupName', {
-      value: asg.autoScalingGroupName,
-      description: 'Name of the Auto Scaling Group'
+    // Create compute infrastructure with database information
+    const computeInfra = new ComputeInfrastructure(this, 'SovRollupCompute', {
+      vpc,
+      healthCheckPort: healthCheckPortParam.valueAsNumber,
+      primaryAz: cdk.Stack.of(this).availabilityZones[0], // Same AZ as Aurora writer
+      databaseCluster: auroraCluster,
+      databaseName: dbNameParam.valueAsString
+    });
+
+    // Allow connections from the compute instances to RDS
+    rdsSecurityGroup.addIngressRule(
+      computeInfra.securityGroup,
+      ec2.Port.tcp(5432), // PostgreSQL port
+      'Allow PostgreSQL connections from compute instances'
+    );
+
+    // Output the Auto Scaling Group names
+    new cdk.CfnOutput(this, 'PrimaryAutoScalingGroupName', {
+      value: computeInfra.primaryAsg.autoScalingGroupName,
+      description: 'Name of the Primary Auto Scaling Group (same AZ as Aurora writer)'
+    });
+
+    new cdk.CfnOutput(this, 'SecondaryAutoScalingGroupName', {
+      value: computeInfra.secondaryAsg.autoScalingGroupName,
+      description: 'Name of the Secondary Auto Scaling Group (multi-AZ)'
     });
 
     // Output the key pair name
     new cdk.CfnOutput(this, 'KeyPairName', {
-      value: keyPair.keyPairName,
+      value: computeInfra.keyPair.keyPairName,
       description: 'Name of the created SSH key pair'
     });
 
     // Output command to retrieve private key
     new cdk.CfnOutput(this, 'GetPrivateKeyCommand', {
-      value: `aws ssm get-parameter --name /ec2/keypair/${keyPair.keyPairId} --region ${cdk.Stack.of(this).region} --with-decryption --query Parameter.Value --output text > ${keyPair.keyPairName}.pem && chmod 400 ${keyPair.keyPairName}.pem`,
+      value: `aws ssm get-parameter --name /ec2/keypair/${computeInfra.keyPair.keyPairId} --region ${cdk.Stack.of(this).region} --with-decryption --query Parameter.Value --output text > ${computeInfra.keyPair.keyPairName}.pem && chmod 400 ${computeInfra.keyPair.keyPairName}.pem`,
       description: 'Command to retrieve the private key'
     });
 
@@ -181,6 +136,36 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SshAccessNote', {
       value: 'To SSH into instances, use AWS Systems Manager Session Manager or find instance IPs via AWS Console',
       description: 'Note about SSH access to Auto Scaling Group instances'
+    });
+
+    // Output Aurora cluster write endpoint
+    new cdk.CfnOutput(this, 'AuroraClusterWriteEndpoint', {
+      value: auroraCluster.clusterEndpoint.hostname,
+      description: 'Aurora cluster write endpoint address'
+    });
+
+    // Output Aurora cluster read endpoint
+    new cdk.CfnOutput(this, 'AuroraClusterReadEndpoint', {
+      value: auroraCluster.clusterReadEndpoint.hostname,
+      description: 'Aurora cluster read endpoint address'
+    });
+
+    // Output database port
+    new cdk.CfnOutput(this, 'DatabasePort', {
+      value: auroraCluster.clusterEndpoint.port.toString(),
+      description: 'Aurora database port'
+    });
+
+    // Output database write connection string
+    new cdk.CfnOutput(this, 'DatabaseWriteConnectionString', {
+      value: `postgresql://${dbUsernameParam.valueAsString}:<password>@${auroraCluster.clusterEndpoint.hostname}:${auroraCluster.clusterEndpoint.port}/${dbNameParam.valueAsString}`,
+      description: 'Aurora write connection string (replace <password> with actual password)'
+    });
+
+    // Output database read connection string
+    new cdk.CfnOutput(this, 'DatabaseReadConnectionString', {
+      value: `postgresql://${dbUsernameParam.valueAsString}:<password>@${auroraCluster.clusterReadEndpoint.hostname}:${auroraCluster.clusterEndpoint.port}/${dbNameParam.valueAsString}`,
+      description: 'Aurora read connection string (replace <password> with actual password)'
     });
   }
 }
