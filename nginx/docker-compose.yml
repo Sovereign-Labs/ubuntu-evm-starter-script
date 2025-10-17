@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  nginx-proxy:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-dynamic.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+      - nginx-logs:/var/log/nginx
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  nginx-logs:
