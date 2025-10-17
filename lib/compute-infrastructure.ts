@@ -5,6 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 import { generateHealthCheckScript } from './health-check-script';
+import { assert } from 'console';
 
 export const MAX_NODE_SETUP_TIME_MINUTES = 15;
 
@@ -176,8 +177,11 @@ export class ComputeInfrastructure extends Construct {
       ]
     });
 
-    const availabilityZones = cdk.Stack.of(this).availabilityZones;
-    const primaryAz = props.primaryAz || availabilityZones[0];
+    const availabilityZones = props.vpc.availabilityZones;
+    assert(availabilityZones.length >= 2, 'Must have at least 2 availability zones');
+    const primaryAz = availabilityZones[0]; // Use VPC's first AZ as primary
+    const secondaryAzs = availabilityZones.slice(1); // Use remaining AZs as secondary
+    assert(secondaryAzs.length >= 1, 'Must have at least 1 secondary availability zone');
 
     // Create primary ASG with guaranteed instance in writer's AZ
     const primaryAsg = new autoscaling.AutoScalingGroup(this, 'PrimaryAsg', {
@@ -186,9 +190,9 @@ export class ComputeInfrastructure extends Construct {
       minCapacity: 1, // Always keep at least 1 instance in primary AZ
       maxCapacity: 2,
       desiredCapacity: 1,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC,
-        availabilityZones: [primaryAz] // Only in writer's AZ
+      vpcSubnets: { // Place all instances in this ASG in the same AZ as the Aurora writer
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        availabilityZones: [primaryAz],
       },
       healthChecks: autoscaling.HealthChecks.ec2({
         gracePeriod: cdk.Duration.minutes(MAX_NODE_SETUP_TIME_MINUTES)
@@ -203,8 +207,9 @@ export class ComputeInfrastructure extends Construct {
       maxCapacity: 3,
       desiredCapacity: 1, // Start with 1 additional instance
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC
-        // Uses all AZs for distribution
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        // Place secondary instances anywhere except the primary AZ. This way we're robust to that AZ going down.
+        availabilityZones: secondaryAzs,
       },
       healthChecks: autoscaling.HealthChecks.ec2({
         gracePeriod: cdk.Duration.minutes(MAX_NODE_SETUP_TIME_MINUTES)

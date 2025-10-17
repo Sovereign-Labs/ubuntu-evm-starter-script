@@ -17,9 +17,9 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
 
     // Create VPC for the rollup infrastructure
     const vpc = new ec2.Vpc(this, 'SovRollupVpc', {
-      maxAzs: 2,
+      maxAzs: 99, // Per the docs, use 99 to ensure the VPC spans all AZs in the region
       natGateways: 1, // Need at least 1 NAT gateway for private subnets
-      subnetConfiguration: [
+      subnetConfiguration: [ // We'll get one subnet per AZ for each type
         {
           name: 'Public',
           subnetType: ec2.SubnetType.PUBLIC,
@@ -54,7 +54,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       allowAllOutbound: true
     });
 
-    // Create Aurora postgres cluster. This gives multi-AZ durability by default and should perform better than postgres.
+    // Create Aurora postgres cluster. This gives multi-AZ durability by default and should perform better than managed postgres.
     const auroraCluster = new rds.DatabaseCluster(this, 'SovRollupAuroraCluster', {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
         version: rds.AuroraPostgresEngineVersion.VER_17_5
@@ -89,8 +89,6 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       storageEncrypted: true,
       // Enable enhanced monitoring for better observability
       monitoringInterval: cdk.Duration.seconds(60),
-      // Enable backtrack for Aurora to allow point-in-time recovery
-      backtrackWindow: cdk.Duration.hours(72)
     });
 
     // Create compute infrastructure with database information
