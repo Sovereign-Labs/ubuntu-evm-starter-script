@@ -58,12 +58,16 @@ echo "Using $DEVICE (largest unmounted block device) for rollup-state storage"
 
 # Check if rollup-state exists and is non-empty - if so, fail to prevent data loss
 ROLLUP_STATE_DIR="/home/$TARGET_USER/rollup-starter/rollup-state"
-if [ -d "$ROLLUP_STATE_DIR" ] && [ "$(ls -A $ROLLUP_STATE_DIR)" ]; then
-    echo "Error: $ROLLUP_STATE_DIR exists and is not empty. Aborting to prevent data loss."
-    exit 1
+if [ -d "$ROLLUP_STATE_DIR" ]; then
+    # Count files other than .gitkeep
+    FILE_COUNT=$(find "$ROLLUP_STATE_DIR" -mindepth 1 ! -name '.gitkeep' | wc -l)
+    if [ "$FILE_COUNT" -gt 0 ]; then
+        echo "Error: $ROLLUP_STATE_DIR exists and contains files other than .gitkeep. Aborting to prevent data loss."
+        exit 1
+    fi
+    # Remove the directory if it exists (but only contains .gitkeep or is empty)
+    rm -rf "$ROLLUP_STATE_DIR"
 fi
-# Remove the directory if it exists (but is empty)
-rm -rf "$ROLLUP_STATE_DIR"
 sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
 # Add the new directory to /etc/fstab
 echo "$DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
@@ -114,6 +118,7 @@ fi
 echo "Updating postgres connection string in config files"
 cd /home/$TARGET_USER/rollup-starter
 find . -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
+find . -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
 
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
