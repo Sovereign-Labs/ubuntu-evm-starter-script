@@ -5,6 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 import { generateHealthCheckScript } from './health-check-script';
+import { nginxDynamicConfig } from './nginx-dynamic-config';
 import { assert } from 'console';
 
 export const MAX_NODE_SETUP_TIME_MINUTES = 15;
@@ -18,9 +19,9 @@ export interface ComputeInfrastructureProps {
 }
 
 export class ComputeInfrastructure extends Construct {
-  public readonly asg: autoscaling.AutoScalingGroup; // Primary ASG
   public readonly primaryAsg: autoscaling.AutoScalingGroup;
   public readonly secondaryAsg: autoscaling.AutoScalingGroup;
+  public readonly proxyAsg: autoscaling.AutoScalingGroup;
   public readonly securityGroup: ec2.SecurityGroup;
   public readonly keyPair: ec2.KeyPair;
   private ec2Role: iam.Role;
@@ -42,6 +43,40 @@ export class ComputeInfrastructure extends Construct {
       'Allow SSH access from anywhere'
     );
 
+    // Create separate security group for proxy instances
+    const proxySecurityGroup = new ec2.SecurityGroup(this, 'ProxySecurityGroup', {
+      vpc: props.vpc,
+      description: 'Security group for OpenResty proxy instances',
+      allowAllOutbound: true
+    });
+
+    // Allow HTTP and HTTPS traffic from anywhere
+    proxySecurityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(80),
+      'Allow HTTP traffic'
+    );
+    
+    proxySecurityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(443),
+      'Allow HTTPS traffic'
+    );
+
+    // Allow SSH from anywhere (to be locked down later)
+    proxySecurityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(22),
+      'Allow SSH access'
+    );
+
+    // Allow proxy to connect to rollup instances on port 12346
+    this.securityGroup.addIngressRule(
+      proxySecurityGroup,
+      ec2.Port.tcp(12346),
+      'Allow proxy to connect to rollup service'
+    );
+
     // Create IAM role for EC2 instances
     this.ec2Role = new iam.Role(this, 'Ec2Role', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
@@ -56,7 +91,21 @@ export class ComputeInfrastructure extends Construct {
               effect: iam.Effect.ALLOW,
               actions: [
                 'autoscaling:SetInstanceHealth',
-                'ec2:DescribeInstances'
+                'ec2:DescribeInstances',
+                'autoscaling:DescribeAutoScalingGroups'
+              ],
+              resources: ['*']
+            })
+          ]
+        }),
+        // Let proxy instances associate Elastic IPs
+        ElasticIPManagement: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: [
+                'ec2:AssociateAddress',
+                'ec2:DescribeAddresses'
               ],
               resources: ['*']
             })
@@ -205,7 +254,7 @@ export class ComputeInfrastructure extends Construct {
       launchTemplate: launchTemplate,
       minCapacity: 0, // Can scale to 0
       maxCapacity: 3,
-      desiredCapacity: 1, // Start with 1 additional instance
+      desiredCapacity: 0, // Start with 0 additional instances
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
         // Place secondary instances anywhere except the primary AZ. This way we're robust to that AZ going down.
@@ -219,12 +268,194 @@ export class ComputeInfrastructure extends Construct {
     // Tag both ASGs
     cdk.Tags.of(primaryAsg).add('ASGType', 'Primary');
     cdk.Tags.of(primaryAsg).add('PreferredAZ', primaryAz);
+    cdk.Tags.of(primaryAsg).add('Stack', cdk.Stack.of(this).stackName);
     cdk.Tags.of(secondaryAsg).add('ASGType', 'Secondary');
+    cdk.Tags.of(secondaryAsg).add('Stack', cdk.Stack.of(this).stackName);
 
-    // Expose both ASGs
+    // Create OpenResty Auto Scaling Group
+    const proxyAsg = new autoscaling.AutoScalingGroup(this, 'ProxyAsg', {
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PUBLIC
+      },
+      launchTemplate: launchTemplate,
+      minCapacity: 1,
+      maxCapacity: 1,
+      desiredCapacity: 1,
+      healthChecks: autoscaling.HealthChecks.ec2({
+        gracePeriod: cdk.Duration.minutes(5)
+      }),
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({
+        maxBatchSize: 1,
+        minInstancesInService: 0,
+        pauseTime: cdk.Duration.minutes(5)
+      })
+    });
+
+    // Tag OpenResty instances
+    cdk.Tags.of(proxyAsg).add('Name', `${cdk.Stack.of(this).stackName}-proxy`);
+    cdk.Tags.of(proxyAsg).add('Service', 'proxy');
+    cdk.Tags.of(proxyAsg).add('Stack', cdk.Stack.of(this).stackName);
+
+    // Custom user data for OpenResty to discover primary ASG instance
+    const proxyUserData = ec2.UserData.forLinux();
+    proxyUserData.addCommands(
+      'set -e',
+      '',
+      '# Get instance metadata',
+      'INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
+      'REGION=' + cdk.Stack.of(this).region,
+      'STACK_NAME=' + cdk.Stack.of(this).stackName,
+      '',
+      '# Find and associate Elastic IP',
+      'echo "Looking for Elastic IP tagged with stack name..."',
+      'EIP_ALLOCATION_ID=$(aws ec2 describe-addresses \\',
+      '  --region $REGION \\',
+      '  --filters "Name=tag:Name,Values=${STACK_NAME}-proxy-eip" \\',
+      '  --query "Addresses[0].AllocationId" \\',
+      '  --output text)',
+      '',
+      'if [ "$EIP_ALLOCATION_ID" != "None" ] && [ -n "$EIP_ALLOCATION_ID" ]; then',
+      '  echo "Associating Elastic IP $EIP_ALLOCATION_ID to instance $INSTANCE_ID"',
+      '  aws ec2 associate-address \\',
+      '    --instance-id $INSTANCE_ID \\',
+      '    --allocation-id $EIP_ALLOCATION_ID \\',
+      '    --region $REGION',
+      '  echo "Elastic IP associated successfully"',
+      'else',
+      '  echo "WARNING: No Elastic IP found for proxy"',
+      'fi',
+      '',
+      '# Install OpenResty from official repository',
+      'curl -O https://openresty.org/package/amazon/openresty.repo',
+      'mv openresty.repo /etc/yum.repos.d/',
+      'yum check-update',
+      'yum install -y openresty',
+      '',
+      '# Create nginx configuration file',
+      'cat > /tmp/nginx-dynamic.conf << \'NGINX_EOF\'',
+      nginxDynamicConfig,
+      'NGINX_EOF',
+      '',
+      '# Function to get primary ASG instance IP',
+      'get_primary_asg_ip() {',
+      '  local stack_name="' + cdk.Stack.of(this).stackName + '"',
+      '  # Find ASG name using tags',
+      '  local asg_name=$(aws autoscaling describe-auto-scaling-groups \\',
+      '    --region ' + cdk.Stack.of(this).region + ' \\',
+      '    --query "AutoScalingGroups[?Tags[?Key==\'Stack\' && Value==\'${stack_name}\'] && Tags[?Key==\'ASGType\' && Value==\'Primary\']].AutoScalingGroupName" \\',
+      '    --output text | head -1)',
+      '  ',
+      '  if [ -n "$asg_name" ]; then',
+      '    local instance_id=$(aws autoscaling describe-auto-scaling-groups \\',
+      '      --auto-scaling-group-names "$asg_name" \\',
+      '      --region ' + cdk.Stack.of(this).region + ' \\',
+      '      --query "AutoScalingGroups[0].Instances[0].InstanceId" \\',
+      '      --output text)',
+      '    ',
+      '    if [ "$instance_id" != "None" ] && [ -n "$instance_id" ]; then',
+      '      aws ec2 describe-instances \\',
+      '        --instance-ids "$instance_id" \\',
+      '        --region ' + cdk.Stack.of(this).region + ' \\',
+      '        --query "Reservations[0].Instances[0].PrivateIpAddress" \\',
+      '        --output text',
+      '    else',
+      '      echo ""',
+      '    fi',
+      '  else',
+      '    echo ""',
+      '  fi',
+      '}',
+      '',
+      '# Wait for primary ASG instance to be available',
+      'PRIMARY_IP=""',
+      'for i in {1..30}; do',
+      '  PRIMARY_IP=$(get_primary_asg_ip)',
+      '  if [ -n "$PRIMARY_IP" ] && [ "$PRIMARY_IP" != "None" ]; then',
+      '    echo "Found primary ASG instance IP: $PRIMARY_IP"',
+      '    break',
+      '  fi',
+      '  echo "Waiting for primary ASG instance... (attempt $i/30)"',
+      '  sleep 10',
+      'done',
+      '',
+      'if [ -z "$PRIMARY_IP" ] || [ "$PRIMARY_IP" == "None" ]; then',
+      '  echo "ERROR: Could not find primary ASG instance IP"',
+      '  exit 1',
+      'fi',
+      '',
+      '# Copy nginx configuration to OpenResty directory',
+      `mkdir -p /usr/local/openresty/nginx/conf`,
+      'cp /tmp/nginx-dynamic.conf /usr/local/openresty/nginx/conf/nginx.conf',
+      '',
+      '# Replace placeholders in nginx config',
+      'sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      'sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      '',
+      '# Create log directories',
+      'mkdir -p /var/log/nginx',
+      'mkdir -p /usr/local/openresty/nginx/logs',
+      '',
+      '# Start OpenResty',
+      'systemctl enable openresty',
+      'systemctl start openresty',
+      '',
+      '# Health check',
+      'for i in {1..10}; do',
+      '  if curl -f http://localhost:80/health &>/dev/null; then',
+      '    echo "OpenResty started successfully"',
+      '    break',
+      '  fi',
+      '  echo "Waiting for OpenResty to start... (attempt $i/10)"',
+      '  sleep 5',
+      'done'
+    );
+
+    // Create custom launch template for OpenResty with its user data
+    const proxyLaunchTemplate = new ec2.LaunchTemplate(this, 'ProxyLaunchTemplate', {
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
+      machineImage: new ec2.AmazonLinuxImage({
+        generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
+      }),
+      securityGroup: proxySecurityGroup,
+      role: this.ec2Role,
+      userData: proxyUserData,
+      blockDevices: [{
+        deviceName: '/dev/xvda',
+        volume: ec2.BlockDeviceVolume.ebs(30, {
+          volumeType: ec2.EbsDeviceVolumeType.GP3,
+          encrypted: true
+        })
+      }]
+    });
+
+    // Update OpenResty ASG to use its own launch template
+    proxyAsg.node.tryRemoveChild('LaunchConfig');
+    const cfnOpenRestyAsg = proxyAsg.node.defaultChild as autoscaling.CfnAutoScalingGroup;
+    cfnOpenRestyAsg.launchTemplate = {
+      launchTemplateId: proxyLaunchTemplate.launchTemplateId!,
+      version: proxyLaunchTemplate.versionNumber
+    };
+
+    // Create Elastic IP for proxy
+    const proxyEip = new ec2.CfnEIP(this, 'ProxyEIP', {
+      domain: 'vpc',
+      tags: [{
+        key: 'Name',
+        value: `${cdk.Stack.of(this).stackName}-proxy-eip`
+      }]
+    });
+
+    // Output the Elastic IP
+    new cdk.CfnOutput(this, 'ProxyElasticIP', {
+      value: proxyEip.ref,
+      description: 'Elastic IP address for the proxy'
+    });
+
+    // Expose all ASGs
     this.primaryAsg = primaryAsg;
     this.secondaryAsg = secondaryAsg;
-    this.asg = primaryAsg; // For backward compatibility
+    this.proxyAsg = proxyAsg;
   }
 
   // Method to grant access to database secret after cluster is created
