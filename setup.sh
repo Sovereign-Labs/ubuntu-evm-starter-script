@@ -40,7 +40,7 @@ echo "Cloning rollup-starter as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
-sudo -u $TARGET_USER git switch preston/evm-starter
+sudo -u $TARGET_USER git switch preston/update-to-nightly
 
 # Find the largest unmounted block device for rollup state storage
 # This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
