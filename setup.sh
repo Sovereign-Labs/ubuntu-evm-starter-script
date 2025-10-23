@@ -10,6 +10,10 @@ set -e
 
 # Parse arguments
 POSTGRES_CONN_STRING="${1:-}"
+QUICKNODE_API_TOKEN="${2:-}"
+QUICKNODE_ENDPOINT="${3:-}"
+CELESTIA_KEY="${4:-}"
+CELESTIA_ADDRESS="${5:-}"
 
 # Determine the target user (ubuntu if running as root, otherwise current user)
 if [ "$EUID" -eq 0 ]; then
@@ -143,6 +147,44 @@ sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
+
+# ---------- Install Celestia -----------
+if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_ENDPOINT"] || [ -z "$CELESTIA_KEY"] || [-z "$CELESTIA_ADDRESS"]; then
+	echo "No QuickNode API token provided, skipping QuickNode setup"
+else
+	cd /home/$TARGET_USER
+	yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
+	sudo cp celestia-node-temp/celestia /usr/local/bin
+	celestia version
+	mkdir -p /home/$TARGET_USER/.celestia-auth
+	tee > /home/$TARGET_USER/.celestia-auth/xtoken.json << 'EOF'
+{
+ "x-token": "$QUICKNODE_API_TOKEN"
+}
+EOF
+	chmod 600 /home/$TARGET_USER/.celestia-auth/xtoken.json
+	celestia light init --p2p.network mocha
+	rm -r /home/$TARGET_USER/.celestia-light-mocha-4/keys
+	mkdir -p /home/$TARGET_USER/.celestia-light-mocha-4/keys
+	echo "$CELESTIA_KEY" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/my_celes_key.info
+	echo "$CELESTIA_ADDRESS" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/5122502ffe2325a248dfd02813d16404fba6f02e.address # TODO: Fix this hardcoding
+	read -r TRUSTED_HEIGHT TRUSTED_HASH <<<"$(curl -s ${QUICKNODE_ENDPOINT}header | jq -r '.result.header | "\(.height) \(.last_block_id.hash)"')" && export TRUSTED_HEIGHT TRUSTED_HASH && echo "Height: $TRUSTED_HEIGHT" && echo "Hash:   $TRUSTED_HASH"
+
+	# Update celestia config with trusted height and hash
+	echo "Updating celestia config with trusted height and hash"
+	CELESTIA_CONFIG="/home/$TARGET_USER/.celestia-light-mocha-4/config.toml"
+	sed -i "s|SyncFromHeight = 0|SyncFromHeight = $TRUSTED_HEIGHT|g" "$CELESTIA_CONFIG"
+	sed -i "s|SyncFromHash = \"\"|SyncFromHash = \"$TRUSTED_HASH\"|g" "$CELESTIA_CONFIG"
+
+	# Start celestia light node
+	echo "Starting celestia light node"
+	celestia light start \
+		--p2p.network mocha \
+		--core.ip "$QUICKNODE_ENDPOINT" \
+		--core.port 9090 \
+		--core.tls \
+		--core.xtoken.path /home/$TARGET_USER/.celestia-auth
+fi
 
 
 # Setup the observability stack as target user
