@@ -80,7 +80,7 @@ DOCKER_DATA_DIR="$ROLLUP_STATE_DIR/docker"
 mkdir -p "$DOCKER_DATA_DIR"
 # Docker daemon runs as root, but we need to ensure proper permissions
 # The docker data directory should be owned by root since docker daemon runs as root
-sudo chown -R root:root "$DOCKER_DATA_DIR"
+# sudo chown -R root:root "$DOCKER_DATA_DIR"
 # Set docker data dir to
 sudo tee /etc/docker/daemon.json > /dev/null << EOF
 {
