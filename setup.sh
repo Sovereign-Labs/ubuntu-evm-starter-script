@@ -19,6 +19,7 @@ QUICKNODE_API_TOKEN=""
 QUICKNODE_HOST=""
 CELESTIA_KEY_SEED=""
 BRANCH_NAME="preston/update-to-nightly"
+IS_PRIMARY=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,13 +43,18 @@ while [[ $# -gt 0 ]]; do
             BRANCH_NAME="$2"
             shift 2
             ;;
+        --is-primary)
+            IS_PRIMARY=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
             echo "  --postgres-conn-string <string>  : Postgres connection string (optional)"
             echo "  --quicknode-token <string>       : Quicknode API token (optional)"
             echo "  --quicknode-host <string>        : Quicknode hostname (optional)"
             echo "  --celestia-seed <string>         : Celestia key seed phrase (optional)"
-            echo "  --branch-name <string>         : Celestia key seed phrase (optional)"
+            echo "  --branch-name <string>           : Branch name to checkout (optional)"
+            echo "  --is-primary                     : Set this node as primary (optional, default: replica)"
             exit 0
             ;;
         *)
@@ -66,6 +72,12 @@ else
     TARGET_USER="$USER"
 fi
 echo "Running setup for user: $TARGET_USER"
+
+# Determine if Celestia should be set up
+SETUP_CELESTIA=false
+if [ -n "$QUICKNODE_API_TOKEN" ] && [ -n "$QUICKNODE_HOST" ] && [ -n "$CELESTIA_KEY_SEED" ]; then
+    SETUP_CELESTIA=true
+fi
 
 # Set file descriptor limit
 #ulimit -n 65536
@@ -169,10 +181,24 @@ cd /home/$TARGET_USER/rollup-starter
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
 
+# Update is_replica setting based on --is-primary flag
+if [ "$IS_PRIMARY" = true ]; then
+    echo "Configuring node as primary (is_replica=false)"
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica = true|is_replica = false|g" {} \;
+else
+    echo "Configuring node as replica (is_replica=true)"
+fi
+
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
 echo "Building rollup as $TARGET_USER"
-sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release'
+if [ "$SETUP_CELESTIA" = true ]; then
+    echo "Building with celestia_da feature"
+    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --features celestia_da --features mock_zkvm --no-default-features'
+else
+    echo "Building without celestia_da feature"
+    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release'
+fi
 cd /home/$TARGET_USER
  
 # ---------- INSTALL DOCKER COMPOSE ----------
@@ -194,8 +220,8 @@ sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
 # ---------- Install Celestia -----------
-if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_HOST" ] || [ -z "$CELESTIA_KEY_SEED" ]; then
-	echo "No QuickNode API token provided, skipping Celestia setup"
+if [ "$SETUP_CELESTIA" = false ]; then
+	echo "Celestia parameters not provided, skipping Celestia setup"
 else
 	# TODO: determine genesis and config file paths
   #	ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/genesis/genesis.json"
