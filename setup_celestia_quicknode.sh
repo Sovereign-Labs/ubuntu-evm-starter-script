@@ -79,7 +79,7 @@ chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-
 # read -r TRUSTED_HEIGHT TRUSTED_HASH <<<"$(curl -s "${QUICKNODE_API_ENDPOINT}header" | jq -r '.result.header | "\(.height) \(.last_block_id.hash)"')" && export TRUSTED_HEIGHT TRUSTED_HASH && echo "Height: $TRUSTED_HEIGHT" && echo "Hash:   $TRUSTED_HASH"
 # This block ocurred on mocha on October 24, 2025
 export TRUSTED_HEIGHT=8552814
-export TRUSTED_HASH="0x0B8D3216D84927887A53E04C746FED94FA905D6408347A2F18E0365625878E56"
+export TRUSTED_HASH="0B8D3216D84927887A53E04C746FED94FA905D6408347A2F18E0365625878E56"
 
 # Update celestia config with trusted height and hash
 echo "Updating celestia config with trusted height=${TRUSTED_HEIGHT} and hash=${TRUSTED_HASH}"
