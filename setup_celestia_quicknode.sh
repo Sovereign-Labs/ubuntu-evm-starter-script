@@ -72,7 +72,7 @@ EOF
 chmod 600 /home/"$TARGET_USER"/.celestia-auth/xtoken.json
 chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-auth
 
-celestia light init --p2p.network mocha
+sudo -u $TARGET_USER bash -c 'celestia light init --p2p.network mocha'
 chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4
 # Config
 # TODO: CHECK
@@ -132,7 +132,7 @@ else
 fi
 
 # Generate light node API key
-LIGHT_NODE_API_KEY=$(celestia light auth admin --p2p.network mocha)
+LIGHT_NODE_API_KEY=$(sudo -u $TARGET_USER bash -c 'celestia light auth admin --p2p.network mocha')
 
 # Update rollup config file if provided
 if [ -n "$ROLLUP_CONFIG_FILE" ]; then
