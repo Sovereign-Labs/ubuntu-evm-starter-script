@@ -194,12 +194,12 @@ else
   echo "Setting up celestia"
 	# TODO: determine genesis and config file paths.
 	# This probably work, but needs to be double checked
-  # ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
-  #ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup_config.toml"
+  ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
+  ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup_config.toml"
 
 	# Run the Celestia setup script
 	CELESTIA_SCRIPT="$(dirname "$0")/setup_celestia_quicknode.sh"
-	sg docker -c "bash '$CELESTIA_SCRIPT' '$TARGET_USER' '$QUICKNODE_API_TOKEN' '$QUICKNODE_HOST' '$CELESTIA_KEY_SEED'"
+	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\""
 fi
 
 
