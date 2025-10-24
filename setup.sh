@@ -102,6 +102,8 @@ sudo systemctl restart docker
 # Add user to docker group
 echo "Adding $TARGET_USER to docker group"
 sudo usermod -aG docker $TARGET_USER
+# Reapply usermod
+exec newgrp docker
 
 # Setup postgres - either local or remote
 if [ -z "$POSTGRES_CONN_STRING" ]; then
