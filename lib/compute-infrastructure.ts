@@ -161,14 +161,7 @@ export class ComputeInfrastructure extends Construct {
     // Add database connection string retrieval if database is provided
     let setupCommand = 'sudo -u ubuntu -H bash -c "sudo /tmp/setup.sh"';
 
-    // Set additional environment variables for optional parameters
-    baseCommands.push(
-      '# Set optional parameters as environment variables',
-      `export QUICKNODE_API_TOKEN="${props.quicknodeApiToken || ''}"`,
-      `export QUICKNODE_ENDPOINT="${props.quicknodeHost || ''}"`,
-      `export CELESTIA_SEED="${props.celestiaSeed || ''}"`,
-      ''
-    );
+    // Environment variables will be set from retrieved secrets in the user data script
     
     // Database connection string setup
     const secretArn = props.databaseCluster.secret!.secretArn;
@@ -191,7 +184,7 @@ export class ComputeInfrastructure extends Construct {
     );
     
     const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
+    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg} '`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
@@ -223,7 +216,7 @@ export class ComputeInfrastructure extends Construct {
     const setupCommandIndex = secondaryBaseCommands.findIndex(cmd => cmd.includes('sudo /tmp/setup.sh'));
     if (setupCommandIndex !== -1) {
       const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg} '`;
     }
     
     secondaryUserData.addCommands(...secondaryBaseCommands);
