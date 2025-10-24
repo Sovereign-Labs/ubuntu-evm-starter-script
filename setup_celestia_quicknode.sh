@@ -70,8 +70,10 @@ tee > /home/"$TARGET_USER"/.celestia-auth/xtoken.json << EOF
 }
 EOF
 chmod 600 /home/"$TARGET_USER"/.celestia-auth/xtoken.json
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-auth
 
 celestia light init --p2p.network mocha
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4
 # Config
 # TODO: CHECK
 read -r TRUSTED_HEIGHT TRUSTED_HASH <<<"$(curl -s "${QUICKNODE_API_ENDPOINT}header" | jq -r '.result.header | "\(.height) \(.last_block_id.hash)"')" && export TRUSTED_HEIGHT TRUSTED_HASH && echo "Height: $TRUSTED_HEIGHT" && echo "Hash:   $TRUSTED_HASH"
@@ -93,7 +95,8 @@ sed -i "s|XTokenPath = \"\"|XTokenPath = \"/home/${TARGET_USER}/.celestia-auth\"
 rm -r /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
 mkdir -p /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
 mkdir -p /home/"$TARGET_USER"/.celestia-app
-chown -R "$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-app
 echo "-----------------"
 echo "$CELESTIA_KEY_SEED" | docker run \
   -v /home/"$TARGET_USER"/.celestia-light-mocha-4/keys:/mnt/keyring \
@@ -116,6 +119,10 @@ CELESTIA_ADDRESS=$(docker run \
 echo "-----------------"
 echo "Imported address for sequencer: ${CELESTIA_ADDRESS}"
 
+# Ensure all files are owned by target user
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4
+chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-app
+
 # Update genesis file if provided
 if [ -n "$ROLLUP_GENESIS_FILE" ]; then
     echo "Updating genesis file with Celestia address"
@@ -137,9 +144,33 @@ else
 fi
 
 
-# Start celestia light node
-echo "Starting celestia light node"
-celestia light start --p2p.network mocha
+# Create systemd service file
+echo "Creating systemd service for celestia light node"
+cat > /etc/systemd/system/celestia-lightd.service << EOF
+[Unit]
+Description=Celestia Light Node
+After=network-online.target
 
-# TODO: Systemd for celestia node
-echo "Done"
+[Service]
+User=${TARGET_USER}
+ExecStart=$(which celestia) light start --p2p.network mocha
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+echo "Enabling and starting celestia light node service"
+sudo systemctl daemon-reload
+sudo systemctl enable celestia-lightd
+sudo systemctl start celestia-lightd
+
+# Wait a moment and check status
+sleep 2
+systemctl status celestia-lightd --no-pager
+
+echo "Done! Celestia light node is running as a systemd service."
+echo "To check logs, run: journalctl -u celestia-lightd.service -f"

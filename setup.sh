@@ -27,7 +27,7 @@ fi
 echo "Running setup for user: $TARGET_USER"
 
 # Set file descriptor limit
-ulimit -n 65536
+#ulimit -n 65536
 sudo tee -a /etc/security/limits.conf > /dev/null << 'EOF'
   *               soft    nofile          65536
   *               hard    nofile          65536
