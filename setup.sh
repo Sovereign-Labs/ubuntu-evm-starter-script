@@ -1,9 +1,13 @@
 #!/bin/bash
 # Set up a fresh ubuntu 22.04 instance to run the rollup
 #
-# Usage: setup.sh [POSTGRES_CONNECTION_STRING]
-#   If POSTGRES_CONNECTION_STRING is provided, skip local postgres setup
-#   Example: setup.sh "postgres://user:pass@host:5432/dbname"
+# Usage: setup.sh [POSTGRES_CONNECTION_STRING] [QUICKNODE_API_TOKEN] [QUICKNODE_HOST] [CELESTIA_KEY_SEED]
+#   POSTGRES_CONNECTION_STRING: If provided, skip local postgres setup (optional)
+#   QUICKNODE_API_TOKEN: Quicknode API token for Celestia (optional)
+#   QUICKNODE_HOST: Quicknode hostname for Celestia (optional)
+#   CELESTIA_KEY_SEED: Celestia key seed phrase for recovery (optional)
+#
+#   Example: setup.sh "postgres://user:pass@host:5432/dbname" "abc123" "restless-black-isle.celestia-mocha.quiknode.pro" "word1 word2 ..."
 
 # Exit on any error
 set -e
@@ -11,9 +15,8 @@ set -e
 # Parse arguments
 POSTGRES_CONN_STRING="${1:-}"
 QUICKNODE_API_TOKEN="${2:-}"
-QUICKNODE_ENDPOINT="${3:-}"
-CELESTIA_KEY="${4:-}"
-CELESTIA_ADDRESS="${5:-}"
+QUICKNODE_HOST="${3:-}"
+CELESTIA_KEY_SEED="${4:-}"
 
 # Determine the target user (ubuntu if running as root, otherwise current user)
 if [ "$EUID" -eq 0 ]; then
@@ -149,41 +152,19 @@ sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
 # ---------- Install Celestia -----------
-if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_ENDPOINT"] || [ -z "$CELESTIA_KEY"] || [-z "$CELESTIA_ADDRESS"]; then
-	echo "No QuickNode API token provided, skipping QuickNode setup"
+if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_HOST" ] || [ -z "$CELESTIA_KEY_SEED" ]; then
+	echo "No QuickNode API token provided, skipping Celestia setup"
 else
-	cd /home/$TARGET_USER
-	yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
-	sudo cp celestia-node-temp/celestia /usr/local/bin
-	celestia version
-	mkdir -p /home/$TARGET_USER/.celestia-auth
-	tee > /home/$TARGET_USER/.celestia-auth/xtoken.json << 'EOF'
-{
- "x-token": "$QUICKNODE_API_TOKEN"
-}
-EOF
-	chmod 600 /home/$TARGET_USER/.celestia-auth/xtoken.json
-	celestia light init --p2p.network mocha
-	rm -r /home/$TARGET_USER/.celestia-light-mocha-4/keys
-	mkdir -p /home/$TARGET_USER/.celestia-light-mocha-4/keys
-	echo "$CELESTIA_KEY" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/my_celes_key.info
-	echo "$CELESTIA_ADDRESS" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/5122502ffe2325a248dfd02813d16404fba6f02e.address # TODO: Fix this hardcoding
-	read -r TRUSTED_HEIGHT TRUSTED_HASH <<<"$(curl -s ${QUICKNODE_ENDPOINT}header | jq -r '.result.header | "\(.height) \(.last_block_id.hash)"')" && export TRUSTED_HEIGHT TRUSTED_HASH && echo "Height: $TRUSTED_HEIGHT" && echo "Hash:   $TRUSTED_HASH"
+	# TODO: etermine genesis and config file paths
+  #	ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/genesis/genesis.json"
+  #	ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/rollup_config.toml"
 
-	# Update celestia config with trusted height and hash
-	echo "Updating celestia config with trusted height and hash"
-	CELESTIA_CONFIG="/home/$TARGET_USER/.celestia-light-mocha-4/config.toml"
-	sed -i "s|SyncFromHeight = 0|SyncFromHeight = $TRUSTED_HEIGHT|g" "$CELESTIA_CONFIG"
-	sed -i "s|SyncFromHash = \"\"|SyncFromHash = \"$TRUSTED_HASH\"|g" "$CELESTIA_CONFIG"
-
-	# Start celestia light node
-	echo "Starting celestia light node"
-	celestia light start \
-		--p2p.network mocha \
-		--core.ip "$QUICKNODE_ENDPOINT" \
-		--core.port 9090 \
-		--core.tls \
-		--core.xtoken.path /home/$TARGET_USER/.celestia-auth
+	# Run the Celestia setup script
+	bash "$(dirname "$0")/setup_celestia_quicknode.sh" \
+		"$TARGET_USER" \
+		"$QUICKNODE_API_TOKEN" \
+		"$QUICKNODE_HOST" \
+		"$CELESTIA_KEY_SEED"
 fi
 
 
