@@ -1,6 +1,10 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as synthetics from 'aws-cdk-lib/aws-synthetics';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { Construct } from 'constructs';
 import { ComputeInfrastructure } from './compute-infrastructure';
 
@@ -196,5 +200,108 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       value: `postgresql://${dbUsernameParam.valueAsString}:<password>@${auroraCluster.clusterReadEndpoint.hostname}:${auroraCluster.clusterEndpoint.port}/${dbNameParam.valueAsString}`,
       description: 'Aurora read connection string (replace <password> with actual password)'
     });
+
+    // --------------- Set up temporary monitoring ---------------
+    // This should be replaced with a grafana instance and more tailored alerting.
+
+    // Monthly Costs (US East-1), according to claude.
+    // CloudWatch Synthetics:
+    // - $0.0012 per canary run
+    // - 1 run/minute × 44,640 runs/month = ~$54/month
+    // CloudWatch Alarms:
+    // - $0.10 per alarm/month = $0.10/month
+    // SNS:
+    // - SMS: ~$0.0075 per message (only when alerting)
+    // - Email: Free
+    // Total: ~$54.10/month for continuous 1-minute monitoring
+    // Create CloudWatch alarm for canary failures
+    // Create SNS topic for alerting
+    const alertTopic = new sns.Topic(this, 'AlertTopic', {
+      displayName: 'SOV Rollup Alerts',
+      topicName: `${cdk.Stack.of(this).stackName}-alerts`
+    });
+
+    // Create CloudWatch Synthetics canary for health check monitoring
+    const healthCheckCanary = new synthetics.Canary(this, 'HealthCheckCanary', {
+      canaryName: `${cdk.Stack.of(this).stackName}-health-check`,
+      schedule: synthetics.Schedule.rate(cdk.Duration.minutes(1)),
+      test: synthetics.Test.custom({
+        code: synthetics.Code.fromInline(`
+const synthetics = require('Synthetics');
+const log = require('SyntheticsLogger');
+
+const healthCheck = async function () {
+    const config = synthetics.getConfiguration();
+    config.setConfig({
+        continueOnStepFailure: false,
+        includeRequestHeaders: true,
+        includeResponseHeaders: true,
+        restrictedHeaders: [],
+        restrictedUrlParameters: []
+    });
+
+    const endpointUrl = process.env.ENDPOINT_URL;
+    if (!endpointUrl) {
+        throw "ENDPOINT_URL environment variable not set";
+    }
+
+    let page = await synthetics.getPage();
+    
+    const response = await page.goto("http://" + endpointUrl + "/sequencer/ready", {
+        waitUntil: 'networkidle0',
+        timeout: 30000
+    });
+    
+    if (response.status() < 200 || response.status() > 299) {
+        throw "Failed health check with status: " + response.status();
+    }
+    
+    log.info("Health check passed with status: " + response.status());
+};
+
+exports.handler = async () => {
+    return await synthetics.executeStep('healthCheck', healthCheck);
+};
+        `),
+        handler: 'index.handler'
+      }),
+      runtime: synthetics.Runtime.SYNTHETICS_NODEJS_PUPPETEER_6_2,
+      environmentVariables: {
+        ENDPOINT_URL: computeInfra.proxyEip.ref
+      }
+    });
+
+    const canaryAlarm = new cloudwatch.Alarm(this, 'CanaryFailureAlarm', {
+      alarmName: `${cdk.Stack.of(this).stackName}-health-check-failure`,
+      alarmDescription: 'Alert when health check canary fails for 5 minutes',
+      metric: healthCheckCanary.metricFailed({
+        period: cdk.Duration.minutes(1),
+        statistic: 'Sum'
+      }),
+      threshold: 1,
+      evaluationPeriods: 5,
+      treatMissingData: cloudwatch.TreatMissingData.BREACHING
+    });
+
+    // Add SNS action to the alarm
+    canaryAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alertTopic));
+
+    // Output SNS topic ARN for subscription setup
+    new cdk.CfnOutput(this, 'AlertTopicArn', {
+      value: alertTopic.topicArn,
+      description: 'SNS topic ARN for alert subscriptions'
+    });
+
+    // Output subscription commands
+    new cdk.CfnOutput(this, 'SubscribeToAlertsEmailCommand', {
+      value: `aws sns subscribe --topic-arn ${alertTopic.topicArn} --protocol email --notification-endpoint your-email@example.com --region ${cdk.Stack.of(this).region}`,
+      description: 'Command to subscribe to email alerts (replace email)'
+    });
+
+    new cdk.CfnOutput(this, 'SubscribeToAlertsSmsCommand', {
+      value: `aws sns subscribe --topic-arn ${alertTopic.topicArn} --protocol sms --notification-endpoint +1234567890 --region ${cdk.Stack.of(this).region}`,
+      description: 'Command to subscribe to SMS alerts (replace phone number with +country code)'
+    });
+    // --------------- End of temporary monitoring ---------------
   }
 }

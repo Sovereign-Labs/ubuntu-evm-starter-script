@@ -28,6 +28,7 @@ export class ComputeInfrastructure extends Construct {
   public readonly proxyAsg: autoscaling.AutoScalingGroup;
   public readonly securityGroup: ec2.SecurityGroup;
   public readonly keyPair: ec2.KeyPair;
+  public readonly proxyEip: ec2.CfnEIP;
   private ec2Role: iam.Role;
 
   constructor(scope: Construct, id: string, props: ComputeInfrastructureProps) {
@@ -496,10 +497,11 @@ export class ComputeInfrastructure extends Construct {
       description: 'Elastic IP address for the proxy'
     });
 
-    // Expose all ASGs
+    // Expose all ASGs and proxy EIP
     this.primaryAsg = primaryAsg;
     this.secondaryAsg = secondaryAsg;
     this.proxyAsg = proxyAsg;
+    this.proxyEip = proxyEip;
   }
 
 }
