@@ -1,6 +1,6 @@
 # Set up a fresh ubuntu 22.04 instance to run the rollup
 #
-# Usage: setup_celestia.sh [TARGET_USER] [QUICKNODE_API_TOKEN] [QUICKNODE_HOST] [CELESTIA_KEY_SEED] [ROLLUP_GENESIS_DIR]
+# Usage: setup_celestia.sh [TARGET_USER] [QUICKNODE_API_TOKEN] [QUICKNODE_HOST] [CELESTIA_KEY_SEED] [ROLLUP_GENESIS_FILE] [ROLLUP_CONFIG_FILE]
 # https://www.quicknode.com/guides/infrastructure/node-setup/run-a-celestia-light-node
 
 set -e
@@ -10,7 +10,8 @@ TARGET_USER="${1:-}"
 QUICKNODE_API_TOKEN="${2:-}"
 QUICKNODE_HOST="${3:-}"
 CELESTIA_KEY_SEED="${4:-}"
-ROLLUP_GENESIS_DIR="${5:-}"
+ROLLUP_GENESIS_FILE="${5:-}"
+ROLLUP_CONFIG_FILE="${6:-}"
 ROLLUP_KEY_NAME="rollup-key"
 
 # Validate that QUICKNODE_HOST is a hostname, not a full URL
@@ -53,6 +54,12 @@ sed -i "s|SyncFromHeight = 0|SyncFromHeight = ${TRUSTED_HEIGHT}|g" "$CELESTIA_CO
 sed -i "s|SyncFromHash = \"\"|SyncFromHash = \"${TRUSTED_HASH}\"|g" "$CELESTIA_CONFIG"
 sed -i "s|DefaultKeyName.*|DefaultKeyName =\"${ROLLUP_KEY_NAME}\"|g" "$CELESTIA_CONFIG"
 
+# Update Core settings in config
+echo "Updating celestia config with Core settings"
+sed -i "s|IP = \"\"|IP = \"${QUICKNODE_HOST}\"|g" "$CELESTIA_CONFIG"
+sed -i "s|TLSEnabled = false|TLSEnabled = true|g" "$CELESTIA_CONFIG"
+sed -i "s|XTokenPath = \"\"|XTokenPath = \"/home/${TARGET_USER}/.celestia-auth\"|g" "$CELESTIA_CONFIG"
+
 # Celestia Keys. Note: test keyring backend
 rm -r /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
 mkdir -p /home/"$TARGET_USER"/.celestia-light-mocha-4/keys
@@ -81,18 +88,16 @@ echo "-----------------"
 echo "Imported address for sequencer: ${CELESTIA_ADDRESS}"
 
 # Updating genesis
-sed -i "s|celestia1[a-z0-9]\{38,\}|${CELESTIA_ADDRESS}|g" "${ROLLUP_GENESIS_DIR}"/genesis.json
-# TODO: Update rollup_config.toml
+sed -i "s|celestia1[a-z0-9]\{38,\}|${CELESTIA_ADDRESS}|g" "${ROLLUP_GENESIS_FILE}"
+LIGHT_NODE_API_KEY=$(celestia light auth admin --p2p.network mocha)
 
-# TODO: PARAMS FROM THE BOTTOM INTO CONFIG
+echo "Updating rollup_config.toml celestia_rpc_auth_token and signer_address"
+sed -i "s|celestia_rpc_auth_token = \".*\"|celestia_rpc_auth_token = \"${LIGHT_NODE_API_KEY}\"|g" "${ROLLUP_CONFIG_FILE}"
+sed -i "s|signer_address = \"celestia1[a-z0-9]\{38,\}\"|signer_address = \"${CELESTIA_ADDRESS}\"|g" "${ROLLUP_CONFIG_FILE}"
+
 
 # Start celestia light node
 echo "Starting celestia light node"
-celestia light start \
-  --p2p.network mocha \
-  --core.ip "$QUICKNODE_HOST" \
-  --core.port 9090 \
-  --core.tls \
-  --core.xtoken.path /home/"$TARGET_USER"/.celestia-auth
+celestia light start --p2p.network mocha
 
 # TODO: Systemd for celestia node
