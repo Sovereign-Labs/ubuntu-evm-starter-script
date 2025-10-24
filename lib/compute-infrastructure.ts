@@ -289,11 +289,12 @@ export class ComputeInfrastructure extends Construct {
     cdk.Tags.of(secondaryAsg).add('ASGType', 'Secondary');
     cdk.Tags.of(secondaryAsg).add('Stack', cdk.Stack.of(this).stackName);
 
-    // Create OpenResty Auto Scaling Group
+    // Create OpenResty Auto Scaling Group (same AZ as primary to avoid cross-AZ data charges)
     const proxyAsg = new autoscaling.AutoScalingGroup(this, 'ProxyAsg', {
       vpc: props.vpc,
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC
+        subnetType: ec2.SubnetType.PUBLIC,
+        availabilityZones: [primaryAz] // Same AZ as primary ASG
       },
       launchTemplate: launchTemplate,
       minCapacity: 1,
