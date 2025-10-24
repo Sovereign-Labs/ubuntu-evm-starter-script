@@ -102,8 +102,6 @@ sudo systemctl restart docker
 # Add user to docker group
 echo "Adding $TARGET_USER to docker group"
 sudo usermod -aG docker $TARGET_USER
-# Reapply usermod
-exec newgrp docker
 
 # Setup postgres - either local or remote
 if [ -z "$POSTGRES_CONN_STRING" ]; then
@@ -162,11 +160,11 @@ else
   #	ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/rollup_config.toml"
 
 	# Run the Celestia setup script
-	bash "$(dirname "$0")/setup_celestia_quicknode.sh" \
-		"$TARGET_USER" \
-		"$QUICKNODE_API_TOKEN" \
-		"$QUICKNODE_HOST" \
-		"$CELESTIA_KEY_SEED"
+	sg docker -c "bash \"$(dirname \"$0\")/setup_celestia_quicknode.sh\" \
+		\"$TARGET_USER\" \
+		\"$QUICKNODE_API_TOKEN\" \
+		\"$QUICKNODE_HOST\" \
+		\"$CELESTIA_KEY_SEED\""
 fi
 
 
@@ -174,7 +172,7 @@ fi
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
-sudo -u $TARGET_USER make start # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
+sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
 sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
 [Journal]
