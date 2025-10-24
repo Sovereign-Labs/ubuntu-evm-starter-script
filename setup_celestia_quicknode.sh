@@ -60,7 +60,6 @@ cd /home/"$TARGET_USER"
 
 # Setup celestia binary
 yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
-sudo cp celestia-node-temp/celestia /usr/local/bin
 celestia version
 
 # Prepare Quicknode auth
