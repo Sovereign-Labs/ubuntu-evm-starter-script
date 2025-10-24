@@ -25,7 +25,7 @@
 #   ./setup_celestia_quicknode.sh \
 #     ubuntu \
 #     abc123def456 \
-#     restless-black-isle.celestia-mocha.quiknode.pro \
+#     a-b-c.celestia-mocha.quicknode.pro \
 #     "word1 word2 word3 ... word24" \
 #     /home/ubuntu/rollup-starter/genesis/genesis.json \
 #     /home/ubuntu/rollup-starter/rollup_config.toml
