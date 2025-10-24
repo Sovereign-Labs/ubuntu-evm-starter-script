@@ -18,6 +18,7 @@ POSTGRES_CONN_STRING=""
 QUICKNODE_API_TOKEN=""
 QUICKNODE_HOST=""
 CELESTIA_KEY_SEED=""
+BRANCH_NAME="preston/update-to-nightly"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -37,12 +38,17 @@ while [[ $# -gt 0 ]]; do
             CELESTIA_KEY_SEED="$2"
             shift 2
             ;;
+        --branch-name)
+            BRANCH_NAME="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
             echo "  --postgres-conn-string <string>  : Postgres connection string (optional)"
             echo "  --quicknode-token <string>       : Quicknode API token (optional)"
             echo "  --quicknode-host <string>        : Quicknode hostname (optional)"
             echo "  --celestia-seed <string>         : Celestia key seed phrase (optional)"
+            echo "  --branch-name <string>         : Celestia key seed phrase (optional)"
             exit 0
             ;;
         *)
@@ -82,7 +88,7 @@ echo "Cloning rollup-starter as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
-sudo -u $TARGET_USER git switch preston/update-to-nightly
+sudo -u $TARGET_USER git switch $BRANCH_NAME
 
 # Find the largest unmounted block device for rollup state storage
 # This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
