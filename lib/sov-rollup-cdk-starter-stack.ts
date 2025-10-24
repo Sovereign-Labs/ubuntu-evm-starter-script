@@ -68,6 +68,12 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       noEcho: true // Hide the value in CloudFormation console
     });
 
+    const branchNameParam = new cdk.CfnParameter(this, 'BranchName', {
+      type: 'String',
+      description: 'Git branch name for setup script (optional)',
+      default: ''
+    });
+
     // Create a security group for RDS
     const rdsSecurityGroup = new ec2.SecurityGroup(this, 'SovRollupRdsSecurityGroup', {
       vpc,
@@ -122,6 +128,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       quicknodeApiToken: quicknodeApiTokenParam.valueAsString || undefined,
       quicknodeHost: quicknodeHostParam.valueAsString || undefined,
       celestiaSeed: celestiaSeedParam.valueAsString || undefined,
+      branchName: branchNameParam.valueAsString || undefined,
     });
 
     // Allow connections from the compute instances to RDS

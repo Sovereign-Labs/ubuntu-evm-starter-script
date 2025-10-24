@@ -47,8 +47,9 @@ The stack includes:
    ```bash
    npx cdk deploy \
      --parameters QuickNodeApiToken=your-token \
-     --parameters QuickNodeHost=https://your-endpoint.quiknode.pro \
-     --parameters CelestiaSeed=your-celestia-seed
+     --parameters QuickNodeHost=your-endpoint.quiknode.pro \
+     --parameters CelestiaSeed=your-celestia-seed \
+     --parameters BranchName=develop
    ```
 
 5. After deployment, the stack will output:
@@ -77,6 +78,7 @@ The stack supports optional parameters that are securely stored in AWS Secrets M
 - **QuickNodeApiToken**: API token for QuickNode blockchain RPC access (hidden)
 - **QuickNodeHost**: QuickNode RPC endpoint URL without http or any slashes
 - **CelestiaSeed**: Celestia node seed for data availability layer (hidden)
+- **BranchName**: Git branch name for setup script (optional, no default)
 
 These parameters are retrieved by EC2 instances at startup and made available as environment variables to the setup script.
 

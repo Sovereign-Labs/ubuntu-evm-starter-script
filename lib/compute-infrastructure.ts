@@ -19,6 +19,7 @@ export interface ComputeInfrastructureProps {
   quicknodeApiToken?: string; // Optional: QuickNode API token
   quicknodeHost?: string; // Optional: QuickNode endpoint
   celestiaSeed?: string; // Optional: Celestia seed phrase
+  branchName?: string; // Optional: Git branch name
 }
 
 export class ComputeInfrastructure extends Construct {
@@ -189,9 +190,11 @@ export class ComputeInfrastructure extends Construct {
         ''
       );
       
-      setupCommand = 'sudo -u ubuntu -H bash -c \'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${QUICKNODE_API_TOKEN:-}" --quicknode-host "${QUICKNODE_ENDPOINT:-}" --celestia-seed "${CELESTIA_SEED:-}" \'';
+      const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
+      setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
     } else {
-      setupCommand = 'sudo -u ubuntu -H bash -c \'sudo /tmp/setup.sh --quicknode-token "${QUICKNODE_API_TOKEN:-}" --quicknode-host "${QUICKNODE_ENDPOINT:-}" --celestia-seed "${CELESTIA_SEED:-}" \'';
+      const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
+      setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
     }
 
     baseCommands.push(
