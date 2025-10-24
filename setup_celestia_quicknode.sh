@@ -6,7 +6,7 @@
 #   2. Configure authentication with Quicknode
 #   3. Import a Celestia key from a seed phrase
 #   4. Update the Celestia config with Core settings (IP, TLS, auth token)
-#   5. Optionally update genesis.json and rollup_config.toml with Celestia credentials
+#   5. Optionally update genesis.json and rollup.toml with Celestia credentials
 #   6. Start the Celestia light node
 #
 # Usage: setup_celestia_quicknode.sh TARGET_USER QUICKNODE_API_TOKEN QUICKNODE_HOST CELESTIA_KEY_SEED [ROLLUP_GENESIS_FILE] [ROLLUP_CONFIG_FILE]
@@ -19,7 +19,7 @@
 #
 # Optional arguments:
 #   ROLLUP_GENESIS_FILE: Path to genesis.json to update with Celestia address (e.g., "/home/ubuntu/rollup-starter/genesis/genesis.json")
-#   ROLLUP_CONFIG_FILE: Path to rollup_config.toml to update with Celestia credentials (e.g., "/home/ubuntu/rollup-starter/rollup_config.toml")
+#   ROLLUP_CONFIG_FILE: Path to rollup.toml to update with Celestia credentials (e.g., "/home/ubuntu/rollup-starter/rollup.toml")
 #
 # Example:
 #   ./setup_celestia_quicknode.sh \
@@ -28,7 +28,7 @@
 #     a-b-c.celestia-mocha.quicknode.pro \
 #     "word1 word2 word3 ... word24" \
 #     /home/ubuntu/rollup-starter/genesis/genesis.json \
-#     /home/ubuntu/rollup-starter/rollup_config.toml
+#     /home/ubuntu/rollup-starter/rollup.toml
 #
 # References:
 #   https://www.quicknode.com/guides/infrastructure/node-setup/run-a-celestia-light-node
@@ -136,7 +136,7 @@ LIGHT_NODE_API_KEY=$(sudo -u $TARGET_USER bash -c 'celestia light auth admin --p
 
 # Update rollup config file if provided
 if [ -n "$ROLLUP_CONFIG_FILE" ]; then
-    echo "Updating rollup_config.toml celestia_rpc_auth_token and signer_address"
+    echo "Updating rollup.toml celestia_rpc_auth_token and signer_address"
     sed -i "s|celestia_rpc_auth_token = \".*\"|celestia_rpc_auth_token = \"${LIGHT_NODE_API_KEY}\"|g" "${ROLLUP_CONFIG_FILE}"
     sed -i "s|signer_address = \"celestia1[a-z0-9]\{38,\}\"|signer_address = \"${CELESTIA_ADDRESS}\"|g" "${ROLLUP_CONFIG_FILE}"
 else
