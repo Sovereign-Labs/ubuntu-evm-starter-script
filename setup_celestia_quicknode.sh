@@ -146,7 +146,7 @@ fi
 
 # Create systemd service file
 echo "Creating systemd service for celestia light node"
-cat > /etc/systemd/system/celestia-lightd.service << EOF
+sudo cat > /etc/systemd/system/celestia-lightd.service << EOF
 [Unit]
 Description=Celestia Light Node
 After=network-online.target
