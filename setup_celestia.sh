@@ -16,8 +16,8 @@ ROLLUP_KEY_NAME="rollup-key"
 # Validate that QUICKNODE_HOST is a hostname, not a full URL
 if [[ "$QUICKNODE_HOST" =~ ^https?:// ]]; then
     echo "Error: QUICKNODE_HOST should be a hostname only, not a full URL."
-    echo "Example: restless-black-isle.celestia-mocha.quiknode.pro"
-    echo "NOT: https://restless-black-isle.celestia-mocha.quiknode.pro/..."
+    echo "Example: a-b-c.celestia-mocha.quiknode.pro"
+    echo "NOT: https://a-b-c.celestia-mocha.quiknode.pro/..."
     exit 1
 fi
 
@@ -67,11 +67,6 @@ echo "$CELESTIA_KEY_SEED" | docker run \
   ghcr.io/celestiaorg/celestia-node:v0.28.2-arabica \
   cel-key --keyring-dir /mnt/keyring add $ROLLUP_KEY_NAME --recover
 
-echo "-----------------"
-echo "KEY IMPORTED"
-
-# Get the key list and extract address
-# Redirect stderr to avoid pollution and use grep to extract only JSON array lines
 CELESTIA_ADDRESS=$(docker run \
   -v /home/"$TARGET_USER"/.celestia-light-mocha-4/keys:/mnt/keyring \
   -v /home/"$TARGET_USER"/.celestia-app:/.celestia-app \
