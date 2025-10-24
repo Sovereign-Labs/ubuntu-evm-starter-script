@@ -220,21 +220,30 @@ sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
 # Configure systemd journal to use the larger mounted disk
-# Move journal to the larger disk to avoid filling up the small root volume
+# Use bind mount to redirect journal to larger disk
 JOURNAL_DIR="$ROLLUP_STATE_DIR/logs/journal"
-sudo mkdir -p "$JOURNAL_DIR"
 
-# Stop journald, move existing logs, create symlink
-sudo systemctl stop systemd-journald
-if [ -d /var/log/journal ]; then
-    sudo cp -r /var/log/journal/* "$JOURNAL_DIR/" 2>/dev/null || true
-    sudo rm -rf /var/log/journal
-fi
-sudo ln -sf "$JOURNAL_DIR" /var/log/journal
-sudo chown -R root:systemd-journal "$JOURNAL_DIR"
-sudo chmod -R 2755 "$JOURNAL_DIR"
+echo "Configuring journal to use larger disk"
+sudo mkdir -p "$JOURNAL_DIR"
+sudo chown root:systemd-journal "$JOURNAL_DIR"
+sudo chmod 2755 "$JOURNAL_DIR"
+
+ln -s $JOURNAL_DIR /var/log/journal
+echo "Created symlink from /var/log/journal to $JOURNAL_DIR"
+
+# # Use bind mount to redirect /var/log/journal to the larger disk
+# # This is the cleanest way - journald just writes to /var/log/journal as normal
+# if ! mountpoint -q /var/log/journal; then
+#     sudo mkdir -p /var/log/journal
+#     sudo mount --bind "$JOURNAL_DIR" /var/log/journal
+#     # Add to fstab to persist across reboots
+#     if ! grep -q "$JOURNAL_DIR /var/log/journal" /etc/fstab; then
+#         echo "$JOURNAL_DIR /var/log/journal none bind 0 0" | sudo tee -a /etc/fstab
+#     fi
+# fi
 
 # Configure journal limits - 50G is safe on the large mounted disk
+echo "Restarting journald"
 sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
 [Journal]
 Storage=persistent
@@ -242,13 +251,15 @@ SystemMaxUse=50G
 SystemKeepFree=10G
 MaxRetentionSec=30day
 EOF
-sudo systemctl start systemd-journald
+sudo systemctl restart systemd-journald
+echo "Journald configured."
 
 
 # ---------- Install Celestia -----------
 if [ "$SETUP_CELESTIA" = false ]; then
 	echo "Celestia parameters not provided, skipping Celestia setup"
 else
+    echo "Setting up Celestia light node with Quicknode as $TARGET_USER"
 	# TODO: determine genesis and config file paths
   #	ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/genesis/genesis.json"
   #	ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/rollup_config.toml"
@@ -263,12 +274,14 @@ fi
 
 
 # Setup the observability stack as target user
+echo "Setting up observability stack as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
 sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
 
+echo "Creating systemd service for rollup"
 sudo tee /etc/systemd/system/rollup.service > /dev/null << EOF
 [Unit]
 Description=Rollup Service
@@ -290,3 +303,4 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload && sudo systemctl enable rollup && sudo systemctl start rollup
+echo "Setup complete! Rollup service is running."
