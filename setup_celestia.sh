@@ -76,13 +76,14 @@ CELESTIA_ADDRESS=$(docker run \
   -v /home/"$TARGET_USER"/.celestia-light-mocha-4/keys:/mnt/keyring \
   -v /home/"$TARGET_USER"/.celestia-app:/.celestia-app \
   -i \
+  --user $(id -u):$(id -g) \
   ghcr.io/celestiaorg/celestia-node:v0.28.2-arabica \
     cel-key \
-    --keyring-dir /mnt/keyring list --output json 2>/dev/null \
-    | grep '^\[' \
-    | jq -r --arg keyname "$ROLLUP_KEY_NAME" '.[] | select(.name == $keyname) | .address')
+    --keyring-dir /mnt/keyring list --output json \
+    | grep -v '^Starting Celestia' | grep -v '^cel-key --keyring-dir' | grep -v '^$' \
+    | jq -r ".[] | select(.name == \"$ROLLUP_KEY_NAME\") | .address" )
 echo "-----------------"
-echo "ADDRESS: ${CELESTIA_ADDRESS}"
+echo "Imported address for sequencer: ${CELESTIA_ADDRESS}"
 
 # Updating genesis
 sed -i "s|celestia1[a-z0-9]\{38,\}|${CELESTIA_ADDRESS}|g" "${ROLLUP_GENESIS_DIR}"/genesis.json
