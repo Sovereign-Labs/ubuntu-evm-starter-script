@@ -219,6 +219,32 @@ sudo apt-get update
 sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
+# Configure systemd journal to use the larger mounted disk
+# Move journal to the larger disk to avoid filling up the small root volume
+JOURNAL_DIR="$ROLLUP_STATE_DIR/logs/journal"
+sudo mkdir -p "$JOURNAL_DIR"
+
+# Stop journald, move existing logs, create symlink
+sudo systemctl stop systemd-journald
+if [ -d /var/log/journal ]; then
+    sudo cp -r /var/log/journal/* "$JOURNAL_DIR/" 2>/dev/null || true
+    sudo rm -rf /var/log/journal
+fi
+sudo ln -sf "$JOURNAL_DIR" /var/log/journal
+sudo chown -R root:systemd-journal "$JOURNAL_DIR"
+sudo chmod -R 2755 "$JOURNAL_DIR"
+
+# Configure journal limits - 50G is safe on the large mounted disk
+sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=50G
+SystemKeepFree=10G
+MaxRetentionSec=30day
+EOF
+sudo systemctl start systemd-journald
+
+
 # ---------- Install Celestia -----------
 if [ "$SETUP_CELESTIA" = false ]; then
 	echo "Celestia parameters not provided, skipping Celestia setup"
@@ -242,13 +268,6 @@ sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observabili
 cd sov-observability
 sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
-sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
-[Journal]
-SystemMaxUse=50G
-SystemKeepFree=10G
-MaxRetentionSec=30day
-EOF
-sudo systemctl restart systemd-journald
 
 sudo tee /etc/systemd/system/rollup.service > /dev/null << EOF
 [Unit]
