@@ -1,19 +1,57 @@
 #!/bin/bash
 # Set up a fresh ubuntu 22.04 instance to run the rollup
 #
-# Usage: setup.sh [POSTGRES_CONNECTION_STRING]
-#   If POSTGRES_CONNECTION_STRING is provided, skip local postgres setup
-#   Example: setup.sh "postgres://user:pass@host:5432/dbname"
+# Usage: setup.sh [OPTIONS]
+#   --postgres-conn-string <string>  : Postgres connection string (optional, default: local postgres)
+#   --quicknode-token <string>       : Quicknode API token for Celestia (optional)
+#   --quicknode-host <string>        : Quicknode hostname for Celestia (optional)
+#   --celestia-seed <string>         : Celestia key seed phrase for recovery (optional)
+#
+#   Example: setup.sh --quicknode-token "abc123" --quicknode-host "restless-black-isle.celestia-mocha.quiknode.pro" --celestia-seed "word1 word2 ..."
+#   Example: setup.sh --postgres-conn-string "postgres://user:pass@host:5432/dbname" --quicknode-token "abc123" --quicknode-host "host" --celestia-seed "seed"
 
 # Exit on any error
 set -e
 
 # Parse arguments
-POSTGRES_CONN_STRING="${1:-}"
-QUICKNODE_API_TOKEN="${2:-}"
-QUICKNODE_ENDPOINT="${3:-}"
-CELESTIA_KEY="${4:-}"
-CELESTIA_ADDRESS="${5:-}"
+POSTGRES_CONN_STRING=""
+QUICKNODE_API_TOKEN=""
+QUICKNODE_HOST=""
+CELESTIA_KEY_SEED=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --postgres-conn-string)
+            POSTGRES_CONN_STRING="$2"
+            shift 2
+            ;;
+        --quicknode-token)
+            QUICKNODE_API_TOKEN="$2"
+            shift 2
+            ;;
+        --quicknode-host)
+            QUICKNODE_HOST="$2"
+            shift 2
+            ;;
+        --celestia-seed)
+            CELESTIA_KEY_SEED="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: setup.sh [OPTIONS]"
+            echo "  --postgres-conn-string <string>  : Postgres connection string (optional)"
+            echo "  --quicknode-token <string>       : Quicknode API token (optional)"
+            echo "  --quicknode-host <string>        : Quicknode hostname (optional)"
+            echo "  --celestia-seed <string>         : Celestia key seed phrase (optional)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 # Determine the target user (ubuntu if running as root, otherwise current user)
 if [ "$EUID" -eq 0 ]; then
@@ -73,18 +111,19 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
     rm -rf "$ROLLUP_STATE_DIR"
 fi
 sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
-# Add the new directory to /etc/fstab
-echo "$DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+# Add the new directory to /etc/fstab if not already present
+if ! grep -q "$DEVICE $ROLLUP_STATE_DIR" /etc/fstab; then
+    echo "$DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+fi
 sudo systemctl daemon-reload
 sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
 
 
 # Put docker's data on our newly mounted disk
 DOCKER_DATA_DIR="$ROLLUP_STATE_DIR/docker"
-mkdir -p "$DOCKER_DATA_DIR"
-# Docker daemon runs as root, but we need to ensure proper permissions
-# The docker data directory should be owned by root since docker daemon runs as root
-# sudo chown -R root:root "$DOCKER_DATA_DIR"
+sudo mkdir -p "$DOCKER_DATA_DIR"
+# Docker daemon runs as root, so ensure proper ownership
+sudo chown root:root "$DOCKER_DATA_DIR"
 # Set docker data dir to
 sudo tee /etc/docker/daemon.json > /dev/null << EOF
 {
@@ -121,8 +160,8 @@ fi
 # Update postgres connection string in rollup-starter config files
 echo "Updating postgres connection string in config files"
 cd /home/$TARGET_USER/rollup-starter
-find . -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
-find . -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
+find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
+find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
 
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
@@ -149,41 +188,18 @@ sudo apt-get install -y docker-compose-plugin
 # ------------- END DOCKER COMPOSE -----------
 
 # ---------- Install Celestia -----------
-if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_ENDPOINT"] || [ -z "$CELESTIA_KEY"] || [-z "$CELESTIA_ADDRESS"]; then
-	echo "No QuickNode API token provided, skipping QuickNode setup"
+if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_HOST" ] || [ -z "$CELESTIA_KEY_SEED" ]; then
+	echo "No QuickNode API token provided, skipping Celestia setup"
 else
-	cd /home/$TARGET_USER
-	yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
-	sudo cp celestia-node-temp/celestia /usr/local/bin
-	celestia version
-	mkdir -p /home/$TARGET_USER/.celestia-auth
-	tee > /home/$TARGET_USER/.celestia-auth/xtoken.json << 'EOF'
-{
- "x-token": "$QUICKNODE_API_TOKEN"
-}
-EOF
-	chmod 600 /home/$TARGET_USER/.celestia-auth/xtoken.json
-	celestia light init --p2p.network mocha
-	rm -r /home/$TARGET_USER/.celestia-light-mocha-4/keys
-	mkdir -p /home/$TARGET_USER/.celestia-light-mocha-4/keys
-	echo "$CELESTIA_KEY" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/my_celes_key.info
-	echo "$CELESTIA_ADDRESS" > /home/$TARGET_USER/.celestia-light-mocha-4/keys/keyring-test/5122502ffe2325a248dfd02813d16404fba6f02e.address # TODO: Fix this hardcoding
-	read -r TRUSTED_HEIGHT TRUSTED_HASH <<<"$(curl -s ${QUICKNODE_ENDPOINT}header | jq -r '.result.header | "\(.height) \(.last_block_id.hash)"')" && export TRUSTED_HEIGHT TRUSTED_HASH && echo "Height: $TRUSTED_HEIGHT" && echo "Hash:   $TRUSTED_HASH"
+  echo "Setting up celestia"
+	# TODO: determine genesis and config file paths.
+	# This probably work, but needs to be double checked
+  ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
+  ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup_config.toml"
 
-	# Update celestia config with trusted height and hash
-	echo "Updating celestia config with trusted height and hash"
-	CELESTIA_CONFIG="/home/$TARGET_USER/.celestia-light-mocha-4/config.toml"
-	sed -i "s|SyncFromHeight = 0|SyncFromHeight = $TRUSTED_HEIGHT|g" "$CELESTIA_CONFIG"
-	sed -i "s|SyncFromHash = \"\"|SyncFromHash = \"$TRUSTED_HASH\"|g" "$CELESTIA_CONFIG"
-
-	# Start celestia light node
-	echo "Starting celestia light node"
-	celestia light start \
-		--p2p.network mocha \
-		--core.ip "$QUICKNODE_ENDPOINT" \
-		--core.port 9090 \
-		--core.tls \
-		--core.xtoken.path /home/$TARGET_USER/.celestia-auth
+	# Run the Celestia setup script (use absolute path)
+	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
+	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\""
 fi
 
 
@@ -191,7 +207,7 @@ fi
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
-sudo -u $TARGET_USER make start # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
+sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, password: admin123
 
 sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
 [Journal]
