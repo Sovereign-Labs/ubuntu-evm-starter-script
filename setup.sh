@@ -76,7 +76,10 @@ echo "Running setup for user: $TARGET_USER"
 # Determine if Celestia should be set up
 SETUP_CELESTIA=false
 if [ -n "$QUICKNODE_API_TOKEN" ] && [ -n "$QUICKNODE_HOST" ] && [ -n "$CELESTIA_KEY_SEED" ]; then
+    echo "Celestia parameters provided. Setting up celestia token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
     SETUP_CELESTIA=true
+else
+    echo "Celestia parameters not fully provided, skipping Celestia setup. token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
 fi
 
 # Set file descriptor limit
