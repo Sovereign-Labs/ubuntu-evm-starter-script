@@ -16,6 +16,9 @@ export interface ComputeInfrastructureProps {
   primaryAz?: string; // Optional: specify primary AZ for co-location with Aurora writer
   databaseCluster?: rds.DatabaseCluster; // Optional: Aurora cluster for connection string
   databaseName?: string; // Database name
+  quicknodeApiToken?: string; // Optional: QuickNode API token
+  quicknodeHost?: string; // Optional: QuickNode endpoint
+  celestiaSeed?: string; // Optional: Celestia seed phrase
 }
 
 export class ComputeInfrastructure extends Construct {
@@ -156,6 +159,15 @@ export class ComputeInfrastructure extends Construct {
 
     // Add database connection string retrieval if database is provided
     let setupCommand = 'sudo -u ubuntu -H bash -c "sudo /tmp/setup.sh"';
+
+    // Set additional environment variables for optional parameters
+    baseCommands.push(
+      '# Set optional parameters as environment variables',
+      `export QUICKNODE_API_TOKEN="${props.quicknodeApiToken || ''}"`,
+      `export QUICKNODE_ENDPOINT="${props.quicknodeHost || ''}"`,
+      `export CELESTIA_SEED="${props.celestiaSeed || ''}"`,
+      ''
+    );
     
     if (props.databaseCluster && props.databaseCluster.secret) {
       const secretArn = props.databaseCluster.secret.secretArn;
@@ -177,7 +189,9 @@ export class ComputeInfrastructure extends Construct {
         ''
       );
       
-      setupCommand = 'sudo -u ubuntu -H bash -c "sudo /tmp/setup.sh \\"$DATABASE_URL\\""';
+      setupCommand = 'sudo -u ubuntu -H bash -c \'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${QUICKNODE_API_TOKEN:-}" --quicknode-host "${QUICKNODE_ENDPOINT:-}" --celestia-seed "${CELESTIA_SEED:-}" \'';
+    } else {
+      setupCommand = 'sudo -u ubuntu -H bash -c \'sudo /tmp/setup.sh --quicknode-token "${QUICKNODE_API_TOKEN:-}" --quicknode-host "${QUICKNODE_ENDPOINT:-}" --celestia-seed "${CELESTIA_SEED:-}" \'';
     }
 
     baseCommands.push(
@@ -385,20 +399,20 @@ export class ComputeInfrastructure extends Construct {
       'fi',
       '',
       '# Copy nginx configuration to OpenResty directory',
-      `mkdir -p /usr/local/openresty/nginx/conf`,
-      'cp /tmp/nginx-dynamic.conf /usr/local/openresty/nginx/conf/nginx.conf',
+      `sudo mkdir -p /usr/local/openresty/nginx/conf`,
+      'sudo cp /tmp/nginx-dynamic.conf /usr/local/openresty/nginx/conf/nginx.conf',
       '',
       '# Replace placeholders in nginx config',
-      'sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
-      'sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      'sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      'sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '',
       '# Create log directories',
-      'mkdir -p /var/log/nginx',
+      'sudo mkdir -p /var/log/nginx',
       'mkdir -p /usr/local/openresty/nginx/logs',
       '',
       '# Start OpenResty',
-      'systemctl enable openresty',
-      'systemctl start openresty',
+      'sudo systemctl enable openresty',
+      'sudo systemctl start openresty',
       '',
       '# Health check',
       'for i in {1..10}; do',

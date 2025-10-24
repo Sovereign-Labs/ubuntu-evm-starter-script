@@ -47,6 +47,27 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       default: 'dbadmin'
     });
 
+    // Add parameters for additional optional configuration
+    const quicknodeApiTokenParam = new cdk.CfnParameter(this, 'QuickNodeApiToken', {
+      type: 'String',
+      description: 'QuickNode API token for blockchain RPC access (optional)',
+      default: '',
+      noEcho: true // Hide the value in CloudFormation console
+    });
+
+    const quicknodeHostParam = new cdk.CfnParameter(this, 'QuickNodeHost', {
+      type: 'String',
+      description: 'QuickNode host URL (optional)',
+      default: ''
+    });
+
+    const celestiaSeedParam = new cdk.CfnParameter(this, 'CelestiaSeed', {
+      type: 'String',
+      description: 'Celestia node key for data availability (optional)',
+      default: '',
+      noEcho: true // Hide the value in CloudFormation console
+    });
+
     // Create a security group for RDS
     const rdsSecurityGroup = new ec2.SecurityGroup(this, 'SovRollupRdsSecurityGroup', {
       vpc,
@@ -97,7 +118,10 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       healthCheckPort: healthCheckPortParam.valueAsNumber,
       primaryAz: cdk.Stack.of(this).availabilityZones[0], // Same AZ as Aurora writer
       databaseCluster: auroraCluster,
-      databaseName: dbNameParam.valueAsString
+      databaseName: dbNameParam.valueAsString,
+      quicknodeApiToken: quicknodeApiTokenParam.valueAsString || undefined,
+      quicknodeHost: quicknodeHostParam.valueAsString || undefined,
+      celestiaSeed: celestiaSeedParam.valueAsString || undefined,
     });
 
     // Allow connections from the compute instances to RDS

@@ -11,6 +11,7 @@ The stack includes:
   - 24GB GP3 root volume
   - SSH access on port 22 (currently open to all IPs)
   - Custom health check system (see Health Check Configuration below)
+  - User data script that accepts optional parameters for blockchain configuration
 - **SSH Key Pair**: Automatically created and stored in AWS Systems Manager Parameter Store
 
 ## Prerequisites
@@ -42,6 +43,14 @@ The stack includes:
    npx cdk deploy
    ```
 
+   To deploy with optional parameters:
+   ```bash
+   npx cdk deploy \
+     --parameters QuickNodeApiToken=your-token \
+     --parameters QuickNodeHost=https://your-endpoint.quiknode.pro \
+     --parameters CelestiaSeed=your-celestia-seed
+   ```
+
 5. After deployment, the stack will output:
    - `InstancePublicIp`: The public IP address to SSH into your instance
    - `InstanceId`: The EC2 instance ID
@@ -60,6 +69,16 @@ The stack includes:
    ssh -i <KeyPairName>.pem ubuntu@<InstancePublicIp>
    ```
    Replace `<KeyPairName>` and `<InstancePublicIp>` with the values from your stack outputs.
+
+## Optional Configuration Parameters
+
+The stack supports optional parameters that are securely stored in AWS Secrets Manager:
+
+- **QuickNodeApiToken**: API token for QuickNode blockchain RPC access (hidden)
+- **QuickNodeHost**: QuickNode RPC endpoint URL without http or any slashes
+- **CelestiaSeed**: Celestia node seed for data availability layer (hidden)
+
+These parameters are retrieved by EC2 instances at startup and made available as environment variables to the setup script.
 
 ## Health Check Configuration
 
