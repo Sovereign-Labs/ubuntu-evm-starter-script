@@ -14,8 +14,8 @@ export interface ComputeInfrastructureProps {
   vpc: ec2.Vpc;
   healthCheckPort: number;
   primaryAz?: string; // Optional: specify primary AZ for co-location with Aurora writer
-  databaseCluster?: rds.DatabaseCluster; // Optional: Aurora cluster for connection string
-  databaseName?: string; // Database name
+  databaseCluster: rds.DatabaseCluster; // Aurora cluster for connection string
+  databaseName: string; // Database name
   quicknodeApiToken?: string; // Optional: QuickNode API token
   quicknodeHost?: string; // Optional: QuickNode endpoint
   celestiaSeed?: string; // Optional: Celestia seed phrase
@@ -118,10 +118,8 @@ export class ComputeInfrastructure extends Construct {
       }
     });
 
-    // Grant access to database secret if database cluster is provided
-    if (props.databaseCluster && props.databaseCluster.secret) {
-      props.databaseCluster.secret.grantRead(this.ec2Role);
-    }
+    // Grant access to database secret
+    props.databaseCluster.secret!.grantRead(this.ec2Role);
 
     // Create a new key pair to ssh into the instances
     this.keyPair = new ec2.KeyPair(this, 'KeyPair', {
@@ -149,13 +147,15 @@ export class ComputeInfrastructure extends Construct {
       'apt-get install -y git curl awscli jq',
       '',
       '# Download the latest setup script from master branch',
-      'echo "Downloading setup script from GitHub..."',
+      'echo "Downloading setup scripts from GitHub..."',
       'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup.sh -o /tmp/setup.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup_celestia_quicknode.sh -o /tmp/setup_celestia_quicknode.sh',
       '',
-      '# Make it executable and owned by ubuntu user',
+      '# Make them executable and owned by ubuntu user',
       'chmod +x /tmp/setup.sh',
+      'chmod +x /tmp/setup_celestia_quicknode.sh',
       'chown ubuntu:ubuntu /tmp/setup.sh',
-      ''
+      'chown ubuntu:ubuntu /tmp/setup_celestia_quicknode.sh',
     ];
 
     // Add database connection string retrieval if database is provided
@@ -170,32 +170,28 @@ export class ComputeInfrastructure extends Construct {
       ''
     );
     
-    if (props.databaseCluster && props.databaseCluster.secret) {
-      const secretArn = props.databaseCluster.secret.secretArn;
-      const dbHost = props.databaseCluster.clusterEndpoint.hostname;
-      const dbPort = props.databaseCluster.clusterEndpoint.port;
-      const dbName = props.databaseName || 'postgres';
-      const region = cdk.Stack.of(this).region;
-      
-      baseCommands.push(
-        '# Retrieve database credentials from Secrets Manager',
-        `echo "Retrieving database credentials..."`,
-        `SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --region ${region} --query SecretString --output text)`,
-        `DB_USERNAME=$(echo $SECRET_JSON | jq -r .username)`,
-        `DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)`,
-        '',
-        '# Construct database connection string',
-        `DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${dbHost}:${dbPort}/${dbName}"`,
-        'echo "Database connection string constructed (password hidden)"',
-        ''
-      );
-      
-      const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-      setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
-    } else {
-      const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-      setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
-    }
+    // Database connection string setup
+    const secretArn = props.databaseCluster.secret!.secretArn;
+    const dbHost = props.databaseCluster.clusterEndpoint.hostname;
+    const dbPort = props.databaseCluster.clusterEndpoint.port;
+    const dbName = props.databaseName;
+    const region = cdk.Stack.of(this).region;
+    
+    baseCommands.push(
+      '# Retrieve database credentials from Secrets Manager',
+      `echo "Retrieving database credentials..."`,
+      `SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${secretArn} --region ${region} --query SecretString --output text)`,
+      `DB_USERNAME=$(echo $SECRET_JSON | jq -r .username)`,
+      `DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)`,
+      '',
+      '# Construct database connection string',
+      `DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${dbHost}:${dbPort}/${dbName}"`,
+      'echo "Database connection string constructed (password hidden)"',
+      ''
+    );
+    
+    const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
+    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
@@ -216,11 +212,24 @@ export class ComputeInfrastructure extends Construct {
       'echo "User data script completed at $(date)"'
     );
     
-    // Add all commands to user data
+    // Add all commands to primary user data
     userData.addCommands(...baseCommands);
 
-    // Create launch template
-    const launchTemplate = new ec2.LaunchTemplate(this, 'LaunchTemplate', {
+    // Create secondary user data (without --is-primary flag)
+    const secondaryUserData = ec2.UserData.forLinux();
+    const secondaryBaseCommands = [...baseCommands];
+    
+    // Replace the setup command to remove --is-primary flag
+    const setupCommandIndex = secondaryBaseCommands.findIndex(cmd => cmd.includes('sudo /tmp/setup.sh'));
+    if (setupCommandIndex !== -1) {
+      const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "\${QUICKNODE_API_TOKEN:-}" --quicknode-host "\${QUICKNODE_ENDPOINT:-}" --celestia-seed "\${CELESTIA_SEED:-}"${branchArg} '`;
+    }
+    
+    secondaryUserData.addCommands(...secondaryBaseCommands);
+
+    // Create primary launch template
+    const launchTemplate = new ec2.LaunchTemplate(this, 'PrimaryLaunchTemplate', {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.C8GD, ec2.InstanceSize.XLARGE12),
       machineImage: ec2.MachineImage.fromSsmParameter(
         '/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id',
@@ -231,6 +240,30 @@ export class ComputeInfrastructure extends Construct {
       securityGroup: this.securityGroup,
       keyPair: this.keyPair,
       userData: userData,
+      role: this.ec2Role,
+      blockDevices: [
+        {
+          // Use a 24 GB EBS volume for the root device. All other storage is on the attached nvme drives for c8gd instances
+          deviceName: '/dev/sda1',
+          volume: ec2.BlockDeviceVolume.ebs(24, {
+            volumeType: ec2.EbsDeviceVolumeType.GP3
+          })
+        }
+      ]
+    });
+
+    // Create secondary launch template (without --is-primary flag)
+    const secondaryLaunchTemplate = new ec2.LaunchTemplate(this, 'SecondaryLaunchTemplate', {
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C8GD, ec2.InstanceSize.XLARGE12),
+      machineImage: ec2.MachineImage.fromSsmParameter(
+        '/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id',
+        {
+          os: ec2.OperatingSystemType.LINUX
+        }
+      ),
+      securityGroup: this.securityGroup,
+      keyPair: this.keyPair,
+      userData: secondaryUserData,
       role: this.ec2Role,
       blockDevices: [
         {
@@ -268,7 +301,7 @@ export class ComputeInfrastructure extends Construct {
     // Create secondary ASG for multi-AZ distribution
     const secondaryAsg = new autoscaling.AutoScalingGroup(this, 'SecondaryAsg', {
       vpc: props.vpc,
-      launchTemplate: launchTemplate,
+      launchTemplate: secondaryLaunchTemplate,
       minCapacity: 0, // Can scale to 0
       maxCapacity: 3,
       desiredCapacity: 0, // Start with 0 additional instances
@@ -476,10 +509,4 @@ export class ComputeInfrastructure extends Construct {
     this.proxyAsg = proxyAsg;
   }
 
-  // Method to grant access to database secret after cluster is created
-  public grantDatabaseAccess(databaseCluster: rds.DatabaseCluster): void {
-    if (databaseCluster.secret) {
-      databaseCluster.secret.grantRead(this.ec2Role);
-    }
-  }
 }
