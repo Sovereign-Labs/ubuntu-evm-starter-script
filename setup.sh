@@ -155,7 +155,7 @@ sudo apt-get install -y docker-compose-plugin
 if [ -z "$QUICKNODE_API_TOKEN" ] || [ -z "$QUICKNODE_HOST" ] || [ -z "$CELESTIA_KEY_SEED" ]; then
 	echo "No QuickNode API token provided, skipping Celestia setup"
 else
-	# TODO: etermine genesis and config file paths
+	# TODO: determine genesis and config file paths
   #	ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/genesis/genesis.json"
   #	ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/rollup_config.toml"
 
