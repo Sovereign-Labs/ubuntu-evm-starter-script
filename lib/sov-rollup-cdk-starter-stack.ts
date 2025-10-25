@@ -223,7 +223,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
 
     // Create CloudWatch Synthetics canary for health check monitoring
     const healthCheckCanary = new synthetics.Canary(this, 'HealthCheckCanary', {
-      canaryName: `${cdk.Stack.of(this).stackName}-health-check`,
+      canaryName: `${cdk.Stack.of(this).stackName.toLowerCase()}-health-check`,
       schedule: synthetics.Schedule.rate(cdk.Duration.minutes(1)),
       test: synthetics.Test.custom({
         code: synthetics.Code.fromInline(`
@@ -280,7 +280,7 @@ exports.handler = async () => {
       }),
       threshold: 1,
       evaluationPeriods: 5,
-      treatMissingData: cloudwatch.TreatMissingData.BREACHING
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING // The failure metric only gets emitted when the canary fails, so we don't want to treat missing data as a breach.
     });
 
     // Add SNS action to the alarm
