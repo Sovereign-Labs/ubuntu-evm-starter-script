@@ -77,7 +77,6 @@ http {
     proxy_buffers 8 64k;
     proxy_busy_buffers_size 128k;
     proxy_http_version 1.1;
-    proxy_set_header Connection "";
 
     server {
         listen 80;
@@ -105,8 +104,14 @@ http {
                 -- Default to follower
                 local use_leader = false
                 
+                -- Check if this is a WebSocket upgrade request
+                local is_websocket = ngx.var.http_upgrade and ngx.var.http_upgrade:lower() == "websocket"
+                
                 -- Route /sequencer/txs POSTs to leader
                 if uri == "/sequencer/txs" and method == "POST" then
+                    use_leader = true
+                -- Route WebSocket connections to leader for consistency
+                elseif is_websocket then
                     use_leader = true
                 -- Check for JSON-RPC eth_sendRawTransaction on /rpc endpoint
                 elseif uri == "/rpc" and method == "POST" then
@@ -147,8 +152,8 @@ http {
 
             # Timeouts
             proxy_connect_timeout 5s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
+            proxy_send_timeout 3600s;  # 1 hour to support long-lived websocket connections
+            proxy_read_timeout 3600s;  # 1 hour to support long-lived websocket connections
         }
     }
 
