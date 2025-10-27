@@ -298,7 +298,7 @@ export class ComputeInfrastructure extends Construct {
       launchTemplate: secondaryLaunchTemplate,
       minCapacity: 0, // Can scale to 0
       maxCapacity: 3,
-      desiredCapacity: 0, // Start with 0 additional instances
+      desiredCapacity: 0, // NOTE: Update this to 1 after initial deployment
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
         // Place secondary instances anywhere except the primary AZ. This way we're robust to that AZ going down.
