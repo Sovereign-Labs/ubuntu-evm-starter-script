@@ -10,6 +10,12 @@ LAUNCH_TIMESTAMP=$(date -d "$LAUNCH_TIME" +%s)
 CURRENT_TIMESTAMP=$(date +%s)
 ELAPSED_MINUTES=$(( ($CURRENT_TIMESTAMP - $LAUNCH_TIMESTAMP) / 60 ))
 
+# Check for maintenance mode
+if [ -f /tmp/healthcheck-maintenance-mode ]; then
+    echo "Health check skipped: Maintenance mode active"
+    exit 0
+fi
+
 # Skip health check during grace period
 if [ $ELAPSED_MINUTES -lt $MAX_NODE_SETUP_TIME_MINUTES ]; then
     echo "Instance still in grace period ($ELAPSED_MINUTES/$MAX_NODE_SETUP_TIME_MINUTES minutes)"

@@ -20,6 +20,7 @@ export interface ComputeInfrastructureProps {
   quicknodeHost?: string; // Optional: QuickNode endpoint
   celestiaSeed?: string; // Optional: Celestia seed phrase
   branchName?: string; // Optional: Git branch name
+  // grafanaPassword?: string; // Optional: Password for Grafana basic auth (defaults to 'grafana-admin')
 }
 
 export class ComputeInfrastructure extends Construct {
@@ -80,6 +81,13 @@ export class ComputeInfrastructure extends Construct {
       proxySecurityGroup,
       ec2.Port.tcp(12346),
       'Allow proxy to connect to rollup service'
+    );
+
+    // Allow proxy to connect to Grafana on rollup instances
+    this.securityGroup.addIngressRule(
+      proxySecurityGroup,
+      ec2.Port.tcp(3000),
+      'Allow proxy to connect to Grafana'
     );
 
     // Create IAM role for EC2 instances
@@ -200,8 +208,8 @@ export class ComputeInfrastructure extends Construct {
       '# Make health check script executable',
       'chmod +x /usr/local/bin/health-check.sh',
       '',
-      '# Add cron job to run health check every minute',
-      'echo "* * * * * root /usr/local/bin/health-check.sh >> /var/log/health-check.log 2>&1" >> /etc/crontab',
+      '# Add cron job to run health check every minute (commented out for now because of false positives)',
+      'echo "# * * * * * root /usr/local/bin/health-check.sh >> /var/log/health-check.log 2>&1" >> /etc/crontab',
       '',
       'echo "User data script completed at $(date)"'
     );
@@ -298,7 +306,7 @@ export class ComputeInfrastructure extends Construct {
       launchTemplate: secondaryLaunchTemplate,
       minCapacity: 0, // Can scale to 0
       maxCapacity: 3,
-      desiredCapacity: 0, // NOTE: Update this to 1 after initial deployment
+      desiredCapacity: 1, // NOTE: Update this to 1 after initial deployment
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
         // Place secondary instances anywhere except the primary AZ. This way we're robust to that AZ going down.
@@ -436,6 +444,12 @@ export class ComputeInfrastructure extends Construct {
       '# Replace placeholders in nginx config',
       'sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       'sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      // '',
+      // '# Create htpasswd file for Grafana authentication',
+      // `# Credentials: admin/${props.grafanaPassword || 'grafana-admin'}`,
+      // 'sudo mkdir -p /etc/nginx',
+      // 'sudo yum install -y httpd-tools',
+      // `echo "admin:$(openssl passwd -apr1 '${props.grafanaPassword || 'grafana-admin'}')" | sudo tee /etc/nginx/.htpasswd`,
       '',
       '# Create log directories',
       'sudo mkdir -p /var/log/nginx',
