@@ -5,14 +5,15 @@ This is an AWS CDK project for deploying sovereign rollup infrastructure on AWS.
 ## Infrastructure Components
 
 The stack includes:
-- **VPC**: Custom VPC with public subnets across 2 availability zones
-- **Auto Scaling Group**: Manages EC2 instances with automatic health monitoring
-  - Instance type: c8gd.12xlarge (ARM-based Graviton) running Ubuntu 22.04 LTS
-  - 24GB GP3 root volume
-  - SSH access on port 22 (currently open to all IPs)
-  - Custom health check system (see Health Check Configuration below)
-  - User data script that accepts optional parameters for blockchain configuration
-- **SSH Key Pair**: Automatically created and stored in AWS Systems Manager Parameter Store
+- **VPC**: Multi-AZ VPC with public and private subnets
+- **Auto Scaling Groups**: 
+  - Primary ASG: Runs in same AZ as Aurora writer for low latency
+  - Secondary ASG: Multi-AZ for high availability
+  - Proxy ASG: OpenResty/nginx proxy with Elastic IP
+- **Aurora PostgreSQL**: Serverless v2 cluster with writer and reader instances
+- **Load Balancer**: OpenResty proxy with dynamic routing, WebSocket support, and TLS termination
+- **Monitoring**: CloudWatch Synthetics canary with SNS alerting
+- **Security**: Automatic SSL/TLS certificates via Let's Encrypt
 
 ## Prerequisites
 
@@ -46,17 +47,25 @@ The stack includes:
    To deploy with optional parameters:
    ```bash
    npx cdk deploy \
+     --parameters DatabaseName=myrollupdb \
+     --parameters DatabaseUsername=dbadmin \
      --parameters QuickNodeApiToken=your-token \
      --parameters QuickNodeHost=your-endpoint.quiknode.pro \
      --parameters CelestiaSeed=your-celestia-seed \
-     --parameters BranchName=develop
+     --parameters BranchName=develop \
+     --parameters InfluxUrl=https://influx.example.com \
+     --parameters InfluxToken=your-influx-token \
+     --parameters DomainName=api.theirdomain.com \
    ```
 
 5. After deployment, the stack will output:
-   - `InstancePublicIp`: The public IP address to SSH into your instance
-   - `InstanceId`: The EC2 instance ID
+   - `PrimaryAutoScalingGroupName`: Name of the primary ASG
+   - `SecondaryAutoScalingGroupName`: Name of the secondary ASG
    - `KeyPairName`: Name of the created SSH key pair
    - `GetPrivateKeyCommand`: AWS CLI command to retrieve your private key
+   - `ProxyElasticIP`: The Elastic IP for accessing your service
+   - `AuroraClusterWriteEndpoint`: Aurora database write endpoint
+   - `Route53Nameservers`: Nameservers to configure at your domain registrar (if Route53 enabled)
 
 6. Retrieve your private key:
    - Copy and run the `GetPrivateKeyCommand` from the stack outputs
@@ -71,30 +80,95 @@ The stack includes:
    ```
    Replace `<KeyPairName>` and `<InstancePublicIp>` with the values from your stack outputs.
 
-## Optional Configuration Parameters
+## Configuration Parameters
 
-The stack supports optional parameters that are securely stored in AWS Secrets Manager:
+### Optional Parameters
+- **HealthCheckPort**: Port for health check endpoint (default: 12346)
+- **DatabaseName**: Aurora database name (default: sovrollupdb)
+- **DatabaseUsername**: Aurora master username (default: dbadmin)
+- **QuickNodeApiToken**: API token for QuickNode blockchain RPC access
+- **QuickNodeHost**: QuickNode RPC endpoint URL (without http://)
+- **CelestiaSeed**: Celestia node seed for data availability layer
+- **BranchName**: Git branch name for setup script
+- **InfluxUrl**: InfluxDB URL for metrics
+- **InfluxToken**: InfluxDB authentication token
+- **DomainName**: Domain name for SSL certificate (e.g., api.theirdomain.com) 
 
-- **QuickNodeApiToken**: API token for QuickNode blockchain RPC access (hidden)
-- **QuickNodeHost**: QuickNode RPC endpoint URL without http or any slashes
-- **CelestiaSeed**: Celestia node seed for data availability layer (hidden)
-- **BranchName**: Git branch name for setup script (optional, no default)
+## TLS/SSL Configuration
 
-These parameters are retrieved by EC2 instances at startup and made available as environment variables to the setup script.
+The stack supports automatic TLS certificates via Let's Encrypt:
+
+### Option 1: Direct Domain Setup
+1. Deploy with `--parameters DomainName=api.theirdomain.com`
+2. Have the domain owner create an A record pointing to your Elastic IP
+3. The proxy will automatically request and renew Let's Encrypt certificates
+
+### Option 2: CNAME Setup with Route53
+1. Deploy with:
+   ```bash
+   --parameters BaseDomain=yourservice.com \
+   --parameters CnameSubdomain=api \
+   --parameters DomainName=api.theirdomain.com
+   ```
+2. Update your domain's nameservers to use Route53 (one-time setup)
+3. Give the third party your CNAME target (e.g., `api.yourservice.com`)
+4. They create: `api.theirdomain.com` CNAME → `api.yourservice.com`
+5. Certificates are automatically obtained for `api.theirdomain.com`
+
+### Costs
+- Route53 Hosted Zone: $0.50/month
+- DNS queries: $0.40 per million requests
+- Let's Encrypt certificates: Free
 
 ## Health Check Configuration
 
 The stack uses a custom health check system that queries `localhost:12346/healthcheck` every minute via cron and reports status directly to the Auto Scaling Group using `aws autoscaling set-instance-health`. Instances have a 15-minute grace period after launch before health checks begin. Your application must expose a health endpoint that returns HTTP 2xx when healthy. To customize: modify `HealthCheckPort` parameter (default: 12346), `MAX_NODE_SETUP_TIME_MINUTES` in the CDK stack (default: 15), or edit the health check script in `lib/health-check-script.ts`. Logs are written to `/var/log/health-check.log`.
+
+## Architecture Overview
+
+The infrastructure uses a multi-tier architecture:
+
+1. **Proxy Layer**: OpenResty/nginx proxy with Elastic IP handles:
+   - TLS termination with Let's Encrypt
+   - Request routing (write operations to primary, reads to any instance)
+   - WebSocket support
+   - Rate limiting (100 req/s with burst of 50)
+
+2. **Compute Layer**: Auto Scaling Groups with c8gd.12xlarge instances
+   - Primary ASG: Single instance in same AZ as database writer
+   - Secondary ASG: Multi-AZ instances for high availability
+   - Automatic setup via user data scripts
+
+3. **Data Layer**: Aurora PostgreSQL Serverless v2
+   - Writer instance co-located with primary compute
+   - Reader instance in different AZ
+   - Automatic backups and encryption
 
 ## Useful Commands
 
 - `npm run build` - Compile TypeScript to JavaScript
 - `npm run watch` - Watch for changes and compile
 - `npm run cdk` - Run CDK commands
+- `npm run generate-nginx-configs` - Generate nginx config files for debugging
 - `npx cdk synth` - Synthesize CloudFormation template
 - `npx cdk diff` - Compare deployed stack with current state
 - `npx cdk deploy` - Deploy this stack to your AWS account/region
 - `npx cdk destroy` - Destroy the stack
+
+### Debugging Nginx Configurations
+
+To inspect the generated nginx configurations: 
+
+```bash
+npm run generate-nginx-configs
+```
+
+This creates two configuration files in the `nginx-configs/` directory:
+- `nginx-http-only.conf`: HTTP configuration used initially and for domains
+- `nginx-https.conf`: HTTPS configuration used after SSL certificates are obtained
+
+Note that this does not alter the stack in any way, or cause any deployments. This is a view-only command..
+
 
 ## Cleaning Up
 
@@ -111,7 +185,8 @@ This will:
 - Remove the CloudFormation stack
 
 **Warning**: This permanently deletes:
-- The EC2 instance and all data on it
+- All EC2 instances and their data
+- The Aurora database cluster
 - The VPC and all networking resources
 - Any resources created by the stack
 
@@ -120,6 +195,10 @@ If deletion fails:
 - Manually delete stuck resources in AWS console
 - Re-run `npx cdk destroy`
 
-## Security Note
+## Security Notes
 
-The EC2 instance currently allows SSH access from any IP address (0.0.0.0/0). This should be restricted to specific IP ranges in production environments.
+- SSH access is currently open to all IPs (0.0.0.0/0) - restrict in production
+- Database credentials are stored in AWS Secrets Manager
+- All traffic between components stays within the VPC
+- TLS certificates are automatically managed by Let's Encrypt
+- Consider enabling AWS GuardDuty and Security Hub for production deployments

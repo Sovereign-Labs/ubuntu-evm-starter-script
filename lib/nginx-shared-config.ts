@@ -11,6 +11,19 @@ export const eventsConfig = `events {
 }`;
 
 export const httpBaseConfig = `http {
+    # Define IP addresses exempt from rate limiting
+    # See https://blog.nginx.org/blog/rate-limiting-nginx
+    geo $rate_limit_override {
+        default 0;
+        204.48.36.211 1;  # Exempt this IP from rate limiting
+    }
+    
+    # Map to set the rate limit key (empty string bypasses rate limiting)
+    map $rate_limit_override $rate_limit_key {
+        0 $binary_remote_addr;
+        1 "";
+    }
+
     include /usr/local/openresty/nginx/conf/mime.types;
     default_type application/json;
 
@@ -81,7 +94,8 @@ export const httpBaseConfig = `http {
     proxy_http_version 1.1;`;
 
 export const rateLimitingConfig = `    # Rate limiting zone - 100 requests per second per IP
-    limit_req_zone $binary_remote_addr zone=global_limit:10m rate=100r/s;
+    # Uses $rate_limit_key which is empty for exempted IPs (defined in httpBaseConfig)
+    limit_req_zone $rate_limit_key zone=global_limit:10m rate=100r/s;
     
     # WebSocket connection upgrade map
     map $http_upgrade $connection_upgrade {
@@ -103,8 +117,9 @@ export const acmeChallengeLocation = `        # ACME challenge for Let's Encrypt
 
 export const proxyLocation = `        # Main proxy location with dynamic backend selection
         location / {
-            # Apply rate limiting - 100 req/s with burst of 50
+            # Apply conditional rate limiting
             limit_req zone=global_limit burst=50 nodelay;
+            limit_req_status 429;
             
             set $backend '';
             

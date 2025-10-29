@@ -575,12 +575,6 @@ export class ComputeInfrastructure extends Construct {
       }]
     });
 
-    // Output the Elastic IP
-    new cdk.CfnOutput(this, 'ProxyElasticIP', {
-      value: proxyEip.ref,
-      description: 'Elastic IP address for the proxy'
-    });
-
     // Expose all ASGs and proxy EIP
     this.primaryAsg = primaryAsg;
     this.secondaryAsg = secondaryAsg;

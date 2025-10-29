@@ -10,7 +10,8 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "generate-nginx-configs": "ts-node bin/generate-nginx-configs.ts"
   },
   "keywords": [],
   "author": "",
