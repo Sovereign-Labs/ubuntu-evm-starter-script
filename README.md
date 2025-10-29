@@ -53,8 +53,9 @@ The stack includes:
      --parameters QuickNodeHost=your-endpoint.quiknode.pro \
      --parameters CelestiaSeed=your-celestia-seed \
      --parameters BranchName=develop \
-     --parameters InfluxUrl=https://influx.example.com \
+     --parameters MonitoringUrl=influx.example.com \
      --parameters InfluxToken=your-influx-token \
+     --parameters AlloyPassword=your-alloy-password \
      --parameters DomainName=api.theirdomain.com \
    ```
 
@@ -90,8 +91,9 @@ The stack includes:
 - **QuickNodeHost**: QuickNode RPC endpoint URL (without http://)
 - **CelestiaSeed**: Celestia node seed for data availability layer
 - **BranchName**: Git branch name for setup script
-- **InfluxUrl**: InfluxDB URL for metrics
+- **MonitoringUrl**: Montoring instance URL for metrics (without http://)
 - **InfluxToken**: InfluxDB authentication token
+- **AlloyPassword**: Alloy password for monitoring authentication
 - **DomainName**: Domain name for SSL certificate (e.g., api.theirdomain.com) 
 
 ## TLS/SSL Configuration

@@ -78,7 +78,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       default: ''
     });
 
-    const influxUrlParam = new cdk.CfnParameter(this, 'InfluxUrl', {
+    const monitoringUrlParam = new cdk.CfnParameter(this, 'MonitoringUrl', {
       type: 'String',
       description: 'InfluxDB URL for metrics (optional)',
       default: ''
@@ -87,6 +87,13 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
     const influxTokenParam = new cdk.CfnParameter(this, 'InfluxToken', {
       type: 'String',
       description: 'InfluxDB authentication token (optional)',
+      default: '',
+      noEcho: true // Hide the value in CloudFormation console
+    });
+
+    const alloyPasswordParam = new cdk.CfnParameter(this, 'AlloyPassword', {
+      type: 'String',
+      description: 'Alloy password for monitoring authentication (optional)',
       default: '',
       noEcho: true // Hide the value in CloudFormation console
     });
@@ -152,8 +159,9 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       quicknodeHost: quicknodeHostParam.valueAsString || undefined,
       celestiaSeed: celestiaSeedParam.valueAsString || undefined,
       branchName: branchNameParam.valueAsString || undefined,
-      influxUrl: influxUrlParam.valueAsString || undefined,
+      monitoringUrl: monitoringUrlParam.valueAsString || undefined,
       influxToken: influxTokenParam.valueAsString || undefined,
+      alloyPassword: alloyPasswordParam.valueAsString || undefined,
       domainName: domainNameParam.valueAsString || undefined,
     });
 

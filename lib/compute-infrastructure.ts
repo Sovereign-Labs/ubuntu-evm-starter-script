@@ -21,8 +21,9 @@ export interface ComputeInfrastructureProps {
   quicknodeHost?: string; // Optional: QuickNode endpoint
   celestiaSeed?: string; // Optional: Celestia seed phrase
   branchName?: string; // Optional: Git branch name
-  influxUrl?: string; // Optional: InfluxDB URL
+  monitoringUrl?: string; // Optional: Monitoring instance URL
   influxToken?: string; // Optional: InfluxDB token
+  alloyPassword?: string; // Optional: Alloy password for monitoring authentication
   domainName?: string; // Optional: Domain name for SSL certificate
   // grafanaPassword?: string; // Optional: Password for Grafana basic auth (defaults to 'grafana-admin')
 }
@@ -201,9 +202,10 @@ export class ComputeInfrastructure extends Construct {
     );
     
     const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-    const influxUrlArg = props.influxUrl ? ` --influx-url "${props.influxUrl}"` : '';
+    const monitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
     const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
-    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${influxUrlArg}${influxTokenArg} --hostname "$INSTANCE_ID" '`;
+    const alloyPasswordArg = props.alloyPassword ? ` --alloy-password "${props.alloyPassword}"` : '';
+    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID" '`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
@@ -235,9 +237,10 @@ export class ComputeInfrastructure extends Construct {
     const setupCommandIndex = secondaryBaseCommands.findIndex(cmd => cmd.includes('sudo /tmp/setup.sh'));
     if (setupCommandIndex !== -1) {
       const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-      const influxUrlArg = props.influxUrl ? ` --influx-url "${props.influxUrl}"` : '';
+      const monitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
       const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
-      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${influxUrlArg}${influxTokenArg} --hostname "$INSTANCE_ID" '`;
+      const alloyPasswordArg = props.alloyPassword ? ` --alloy-password "${props.alloyPassword}"` : '';
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID" '`;
     }
     
     secondaryUserData.addCommands(...secondaryBaseCommands);
