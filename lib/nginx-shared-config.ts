@@ -1,14 +1,16 @@
-export const nginxDynamicConfig = `worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /usr/local/openresty/nginx/logs/nginx.pid;
+// Shared nginx configuration components
 
-events {
+export const workerConfig = `worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /usr/local/openresty/nginx/logs/nginx.pid;`;
+
+export const eventsConfig = `events {
     worker_connections 4096;
     use epoll;
     multi_accept on;
-}
+}`;
 
-http {
+export const httpBaseConfig = `http {
     include /usr/local/openresty/nginx/conf/mime.types;
     default_type application/json;
 
@@ -76,20 +78,30 @@ http {
     proxy_buffer_size 64k;
     proxy_buffers 8 64k;
     proxy_busy_buffers_size 128k;
-    proxy_http_version 1.1;
+    proxy_http_version 1.1;`;
 
-    server {
-        listen 80;
-        server_name _;
+export const rateLimitingConfig = `    # Rate limiting zone - 100 requests per second per IP
+    limit_req_zone $binary_remote_addr zone=global_limit:10m rate=100r/s;
+    
+    # WebSocket connection upgrade map
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }`;
 
-        # Health check endpoint
+export const healthCheckLocation = `        # Health check endpoint
         location /health {
             access_log off;
             return 200 "healthy\\n";
             add_header Content-Type text/plain;
-        }
+        }`;
 
-        # Main proxy location with dynamic backend selection
+export const acmeChallengeLocation = `        # ACME challenge for Let's Encrypt
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }`;
+
+export const proxyLocation = `        # Main proxy location with dynamic backend selection
         location / {
             # Apply rate limiting - 100 req/s with burst of 50
             limit_req zone=global_limit burst=50 nodelay;
@@ -154,15 +166,21 @@ http {
             proxy_connect_timeout 5s;
             proxy_send_timeout 3600s;  # 1 hour to support long-lived websocket connections
             proxy_read_timeout 3600s;  # 1 hour to support long-lived websocket connections
-        }
-    }
+        }`;
 
-    # Rate limiting zone - 100 requests per second per IP
-    limit_req_zone $binary_remote_addr zone=global_limit:10m rate=100r/s;
-    
-    # WebSocket connection upgrade map
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        '' close;
-    }
-}`;
+export const sslConfig = `        # SSL certificate paths (will be created by certbot)
+        ssl_certificate /etc/letsencrypt/live/{{DOMAIN_NAME}}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/{{DOMAIN_NAME}}/privkey.pem;
+
+        # Modern SSL configuration
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
+        ssl_prefer_server_ciphers off;
+        ssl_session_timeout 1d;
+        ssl_session_cache shared:SSL:50m;
+        ssl_session_tickets off;
+
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;`;

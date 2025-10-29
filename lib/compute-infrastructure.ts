@@ -5,7 +5,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
 import { generateHealthCheckScript } from './health-check-script';
-import { nginxDynamicConfig } from './nginx-dynamic-config';
+import { nginxHttpOnlyConfig } from './nginx-http-only-config';
+import { nginxHttpsConfig } from './nginx-https-config';
 import { assert } from 'console';
 
 export const MAX_NODE_SETUP_TIME_MINUTES = 15;
@@ -20,6 +21,9 @@ export interface ComputeInfrastructureProps {
   quicknodeHost?: string; // Optional: QuickNode endpoint
   celestiaSeed?: string; // Optional: Celestia seed phrase
   branchName?: string; // Optional: Git branch name
+  influxUrl?: string; // Optional: InfluxDB URL
+  influxToken?: string; // Optional: InfluxDB token
+  domainName?: string; // Optional: Domain name for SSL certificate
   // grafanaPassword?: string; // Optional: Password for Grafana basic auth (defaults to 'grafana-admin')
 }
 
@@ -155,6 +159,10 @@ export class ComputeInfrastructure extends Construct {
       'apt-get update',
       'apt-get install -y git curl awscli jq',
       '',
+      '# Get EC2 instance ID for hostname',
+      'INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
+      'echo "Instance ID: $INSTANCE_ID"',
+      '',
       '# Download the latest setup script from master branch',
       'echo "Downloading setup scripts from GitHub..."',
       'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup.sh -o /tmp/setup.sh',
@@ -193,7 +201,9 @@ export class ComputeInfrastructure extends Construct {
     );
     
     const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg} '`;
+    const influxUrlArg = props.influxUrl ? ` --influx-url "${props.influxUrl}"` : '';
+    const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
+    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${influxUrlArg}${influxTokenArg} --hostname "$INSTANCE_ID" '`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
@@ -225,7 +235,9 @@ export class ComputeInfrastructure extends Construct {
     const setupCommandIndex = secondaryBaseCommands.findIndex(cmd => cmd.includes('sudo /tmp/setup.sh'));
     if (setupCommandIndex !== -1) {
       const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
-      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg} '`;
+      const influxUrlArg = props.influxUrl ? ` --influx-url "${props.influxUrl}"` : '';
+      const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${influxUrlArg}${influxTokenArg} --hostname "$INSTANCE_ID" '`;
     }
     
     secondaryUserData.addCommands(...secondaryBaseCommands);
@@ -352,13 +364,16 @@ export class ComputeInfrastructure extends Construct {
 
     // Custom user data for OpenResty to discover primary ASG instance
     const proxyUserData = ec2.UserData.forLinux();
-    proxyUserData.addCommands(
+    
+    // Base commands without domain-specific configuration
+    const baseProxyCommands = [
       'set -e',
       '',
       '# Get instance metadata',
       'INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
       'REGION=' + cdk.Stack.of(this).region,
       'STACK_NAME=' + cdk.Stack.of(this).stackName,
+      'DOMAIN_NAME=' + (props.domainName || ''),
       '',
       '# Find and associate Elastic IP',
       'echo "Looking for Elastic IP tagged with stack name..."',
@@ -385,11 +400,26 @@ export class ComputeInfrastructure extends Construct {
       'yum check-update',
       'yum install -y openresty',
       '',
-      '# Create nginx configuration file',
-      'cat > /tmp/nginx-dynamic.conf << \'NGINX_EOF\'',
-      nginxDynamicConfig,
-      'NGINX_EOF',
+      '# Install certbot if domain name is provided',
+      'if [ -n "$DOMAIN_NAME" ]; then',
+      '  echo "Installing certbot for domain: $DOMAIN_NAME"',
+      '  amazon-linux-extras install epel -y',
+      '  yum install -y certbot',
+      '  mkdir -p /var/www/certbot',
+      'fi',
       '',
+      '# Create nginx configuration file (HTTP-only for all cases initially - we need the proxy to be running to pass an ACME challenge to get a TLS certificate before we can use the full config)',
+      'cat > /tmp/nginx-dynamic.conf << \'NGINX_EOF\'',
+      nginxHttpOnlyConfig,
+      'NGINX_EOF',
+      ''
+    ];
+    
+    // Add all base commands
+    proxyUserData.addCommands(...baseProxyCommands);
+    
+    // Continue with the rest of the commands
+    proxyUserData.addCommands(
       '# Function to get primary ASG instance IP',
       'get_primary_asg_ip() {',
       '  local stack_name="' + cdk.Stack.of(this).stackName + '"',
@@ -444,12 +474,14 @@ export class ComputeInfrastructure extends Construct {
       '# Replace placeholders in nginx config',
       'sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       'sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
-      // '',
-      // '# Create htpasswd file for Grafana authentication',
-      // `# Credentials: admin/${props.grafanaPassword || 'grafana-admin'}`,
-      // 'sudo mkdir -p /etc/nginx',
-      // 'sudo yum install -y httpd-tools',
-      // `echo "admin:$(openssl passwd -apr1 '${props.grafanaPassword || 'grafana-admin'}')" | sudo tee /etc/nginx/.htpasswd`,
+      '',
+      '# Configure domain name in nginx',
+      'if [ -n "$DOMAIN_NAME" ]; then',
+      '  sudo sed -i "s/{{DOMAIN_NAME}}/$DOMAIN_NAME/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      'else',
+      '  # If no domain, use wildcard server name',
+      '  sudo sed -i "s/{{DOMAIN_NAME}}/_/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      'fi',
       '',
       '# Create log directories',
       'sudo mkdir -p /var/log/nginx',
@@ -458,6 +490,44 @@ export class ComputeInfrastructure extends Construct {
       '# Start OpenResty',
       'sudo systemctl enable openresty',
       'sudo systemctl start openresty',
+      '',
+      '# Setup Let\'s Encrypt certificate if domain is provided',
+      'if [ -n "$DOMAIN_NAME" ]; then',
+      '  echo "Setting up Let\'s Encrypt certificate for $DOMAIN_NAME"',
+      '  ',
+      '  # Wait for OpenResty to start',
+      '  sleep 5',
+      '  ',
+      '  # Get certificate using webroot method',
+      '  certbot certonly --webroot \\',
+      '    --webroot-path=/var/www/certbot \\',
+      '    --non-interactive \\',
+      '    --agree-tos \\',
+      '    --email admin@$DOMAIN_NAME \\',
+      '    --domains $DOMAIN_NAME \\',
+      '    --keep-until-expiring',
+      '  ',
+      '  # If certificate was obtained, switch to HTTPS config',
+      '  if [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]; then',
+      '    # Create HTTPS config',
+      '    cat > /tmp/nginx-https.conf << \'NGINX_EOF\'',
+      nginxHttpsConfig,
+      'NGINX_EOF',
+      '    sudo cp /tmp/nginx-https.conf /usr/local/openresty/nginx/conf/nginx.conf',
+      '    sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      '    sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      '    sudo sed -i "s/{{DOMAIN_NAME}}/$DOMAIN_NAME/g" /usr/local/openresty/nginx/conf/nginx.conf',
+      '    ',
+      '    # Reload nginx with SSL configuration',
+      '    sudo systemctl reload openresty',
+      '    echo "SSL certificate installed and nginx reloaded with HTTPS configuration"',
+      '  else',
+      '    echo "WARNING: Failed to obtain SSL certificate, continuing with HTTP only"',
+      '  fi',
+      '  ',
+      '  # Setup automatic renewal',
+      '  echo "0 3 * * * root certbot renew --quiet --post-hook \'systemctl reload openresty\'" >> /etc/crontab',
+      'fi',
       '',
       '# Health check',
       'for i in {1..10}; do',
