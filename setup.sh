@@ -6,9 +6,14 @@
 #   --quicknode-token <string>       : Quicknode API token for Celestia (optional)
 #   --quicknode-host <string>        : Quicknode hostname for Celestia (optional)
 #   --celestia-seed <string>         : Celestia key seed phrase for recovery (optional)
+#   --monitoring-url <string>        : Monitoring URL for metrics (optional, do not include http://)
+#   --influx-token <string>          : InfluxDB authentication token (optional)
+#   --hostname <string>              : Hostname for metrics reporting (optional)
+#   --alloy-password <string>        : Grafana Alloy password for central config (optional)
 #
 #   Example: setup.sh --quicknode-token "abc123" --quicknode-host "restless-black-isle.celestia-mocha.quiknode.pro" --celestia-seed "word1 word2 ..."
 #   Example: setup.sh --postgres-conn-string "postgres://user:pass@host:5432/dbname" --quicknode-token "abc123" --quicknode-host "host" --celestia-seed "seed"
+#   Example: setup.sh --monitoring-url "influx.example.com" --influx-token "mytoken123" --hostname "rollup-node-1" --alloy-password "mypassword"
 
 # Exit on any error
 set -e
@@ -18,6 +23,10 @@ POSTGRES_CONN_STRING=""
 QUICKNODE_API_TOKEN=""
 QUICKNODE_HOST=""
 CELESTIA_KEY_SEED=""
+MONITORING_URL=""
+INFLUX_TOKEN=""
+HOSTNAME=""
+ALLOY_PASSWORD=""
 BRANCH_NAME="preston/update-to-nightly"
 IS_PRIMARY=false
 
@@ -39,6 +48,22 @@ while [[ $# -gt 0 ]]; do
             CELESTIA_KEY_SEED="$2"
             shift 2
             ;;
+        --monitoring-url)
+            MONITORING_URL="$2"
+            shift 2
+            ;;
+        --influx-token)
+            INFLUX_TOKEN="$2"
+            shift 2
+            ;;
+        --hostname)
+            HOSTNAME="$2"
+            shift 2
+            ;;
+        --alloy-password)
+            ALLOY_PASSWORD="$2"
+            shift 2
+            ;;
         --branch-name)
             BRANCH_NAME="$2"
             shift 2
@@ -53,6 +78,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --quicknode-token <string>       : Quicknode API token (optional)"
             echo "  --quicknode-host <string>        : Quicknode hostname (optional)"
             echo "  --celestia-seed <string>         : Celestia key seed phrase (optional)"
+            echo "  --monitoring-url <string>        : Monitoring instance URL for metrics (optional, do not include http://)"
+            echo "  --influx-token <string>          : InfluxDB authentication token (optional)"
+            echo "  --hostname <string>              : Hostname of this box for metrics reporting (optional)"
+            echo "  --alloy-password <string>        : Grafana Alloy password for central config (optional)"
             echo "  --branch-name <string>           : Branch name to checkout (optional)"
             echo "  --is-primary                     : Set this node as primary (optional, default: replica)"
             exit 0
@@ -279,6 +308,29 @@ echo "Setting up observability stack as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
+
+# Configure telegraf with provided parameters
+if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
+    echo "Configuring telegraf with provided parameters"
+    sudo -u $TARGET_USER git checkout preston/cfn-template
+    sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" telegraf/telegraf.conf
+    sudo sed -i "s|{INFLUX_TOKEN}|$INFLUX_TOKEN|g" telegraf/telegraf.conf
+    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" telegraf/telegraf.conf
+else
+    echo "Warning: Telegraf parameters not fully provided, using defaults from config file"
+fi
+
+# Configure Grafana Alloy with central config if password provided
+if [ -n "$ALLOY_PASSWORD" ]; then
+    echo "Configuring Grafana Alloy with central config"
+    sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
+    sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
+    sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" grafana-alloy/config.central.alloy
+    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" grafana-alloy/config.central.alloy
+else
+    echo "Alloy password not provided, using local config"
+fi
+
 sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
 
