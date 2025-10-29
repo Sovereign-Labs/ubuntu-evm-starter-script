@@ -5,7 +5,6 @@ import * as synthetics from 'aws-cdk-lib/aws-synthetics';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
-import * as route53 from 'aws-cdk-lib/aws-route53';
 import { Construct } from 'constructs';
 import { ComputeInfrastructure } from './compute-infrastructure';
 
@@ -97,19 +96,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       description: 'Domain name for SSL certificate (optional, e.g., api.example.com)',
       default: ''
     });
-
-    const baseDomainParam = new cdk.CfnParameter(this, 'BaseDomain', {
-      type: 'String',
-      description: 'Your base domain for Route53 hosted zone (e.g., yourservice.com)',
-      default: ''
-    });
-
-    const cnameSubdomainParam = new cdk.CfnParameter(this, 'CnameSubdomain', {
-      type: 'String', 
-      description: 'Subdomain for CNAME target (e.g., "api" will create api.yourservice.com)',
-      default: 'api'
-    });
-
+    
     // Create a security group for RDS
     const rdsSecurityGroup = new ec2.SecurityGroup(this, 'SovRollupRdsSecurityGroup', {
       vpc,
@@ -177,29 +164,6 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       'Allow PostgreSQL connections from compute instances'
     );
 
-    // Create Route53 hosted zone and A record if base domain is provided
-    let hostedZone: route53.HostedZone | undefined;
-    let cnameTarget: string | undefined;
-    
-    if (baseDomainParam.valueAsString) {
-      // Create or lookup hosted zone
-      hostedZone = new route53.HostedZone(this, 'HostedZone', {
-        zoneName: baseDomainParam.valueAsString,
-        comment: `Hosted zone for ${this.stackName} CNAME targets`
-      });
-
-      // Create A record pointing to the proxy Elastic IP
-      const aRecord = new route53.ARecord(this, 'ProxyARecord', {
-        zone: hostedZone,
-        recordName: cnameSubdomainParam.valueAsString,
-        target: route53.RecordTarget.fromIpAddresses(computeInfra.proxyEip.ref),
-        ttl: cdk.Duration.minutes(5),
-        comment: 'A record for proxy Elastic IP'
-      });
-
-      cnameTarget = aRecord.domainName;
-    }
-
     // Output the Auto Scaling Group names
     new cdk.CfnOutput(this, 'PrimaryAutoScalingGroupName', {
       value: computeInfra.primaryAsg.autoScalingGroupName,
@@ -236,30 +200,6 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
         'No domain name provided. Service is accessible via HTTP only at the Elastic IP.',
       description: 'Instructions for domain setup'
     });
-
-    // Output CNAME target if Route53 is configured
-    if (cnameTarget) {
-      new cdk.CfnOutput(this, 'CnameTarget', {
-        value: cnameTarget,
-        description: 'CNAME target for third-party domains'
-      });
-
-      new cdk.CfnOutput(this, 'ThirdPartyDomainInstructions', {
-        value: `Third parties should create a CNAME record pointing their subdomain to: ${cnameTarget}`,
-        description: 'Instructions for third-party domain configuration'
-      });
-    }
-
-    // Output Route53 nameservers if hosted zone was created
-    if (hostedZone) {
-      new cdk.CfnOutput(this, 'Route53Nameservers', {
-        value: cdk.Fn.join(', ', hostedZone.hostedZoneNameServers || []),
-        description: 'Route53 nameservers for your domain (update your domain registrar)',
-        condition: new cdk.CfnCondition(this, 'HasBaseDomain', {
-          expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(baseDomainParam.valueAsString, ''))
-        })
-      });
-    }
 
     // Output Aurora cluster write endpoint
     new cdk.CfnOutput(this, 'AuroraClusterWriteEndpoint', {
