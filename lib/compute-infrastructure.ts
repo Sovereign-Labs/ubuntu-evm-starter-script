@@ -4,9 +4,6 @@ import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Construct } from 'constructs';
-import { generateHealthCheckScript } from './health-check-script';
-import { nginxHttpOnlyConfig } from './nginx-http-only-config';
-import { nginxHttpsConfig } from './nginx-https-config';
 import { assert } from 'console';
 
 export const MAX_NODE_SETUP_TIME_MINUTES = 15;
@@ -211,18 +208,6 @@ export class ComputeInfrastructure extends Construct {
       '# Execute the setup script as ubuntu user with sudo privileges',
       'echo "Executing setup script as ubuntu user..."',
       setupCommand,
-      '',
-      '# Create health check script',
-      `cat > /usr/local/bin/health-check.sh << 'EOF'`,
-      generateHealthCheckScript(props.healthCheckPort.toString(), MAX_NODE_SETUP_TIME_MINUTES),
-      'EOF',
-      '',
-      '# Make health check script executable',
-      'chmod +x /usr/local/bin/health-check.sh',
-      '',
-      '# Add cron job to run health check every minute (commented out for now because of false positives)',
-      'echo "# * * * * * root /usr/local/bin/health-check.sh >> /var/log/health-check.log 2>&1" >> /etc/crontab',
-      '',
       'echo "User data script completed at $(date)"'
     );
     
@@ -411,11 +396,8 @@ export class ComputeInfrastructure extends Construct {
       '  mkdir -p /var/www/certbot',
       'fi',
       '',
-      '# Create nginx configuration file (HTTP-only for all cases initially - we need the proxy to be running to pass an ACME challenge to get a TLS certificate before we can use the full config)',
-      'cat > /tmp/nginx-dynamic.conf << \'NGINX_EOF\'',
-      nginxHttpOnlyConfig,
-      'NGINX_EOF',
-      ''
+      '# Download nginx configuration file (HTTP-only for all cases initially - we need the proxy to be running to pass an ACME challenge to get a TLS certificate before we can use the full config)',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/nginx-http-only.conf -o /tmp/nginx-http-only.conf',
     ];
     
     // Add all base commands
@@ -472,7 +454,7 @@ export class ComputeInfrastructure extends Construct {
       '',
       '# Copy nginx configuration to OpenResty directory',
       `sudo mkdir -p /usr/local/openresty/nginx/conf`,
-      'sudo cp /tmp/nginx-dynamic.conf /usr/local/openresty/nginx/conf/nginx.conf',
+      'sudo cp /tmp/nginx-http-only.conf /usr/local/openresty/nginx/conf/nginx.conf',
       '',
       '# Replace placeholders in nginx config',
       'sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
@@ -506,23 +488,21 @@ export class ComputeInfrastructure extends Construct {
       '    --webroot-path=/var/www/certbot \\',
       '    --non-interactive \\',
       '    --agree-tos \\',
-      '    --email admin@$DOMAIN_NAME \\',
+      '    --email info@sovlabs.io \\',
       '    --domains $DOMAIN_NAME \\',
       '    --keep-until-expiring',
       '  ',
       '  # If certificate was obtained, switch to HTTPS config',
       '  if [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]; then',
-      '    # Create HTTPS config',
-      '    cat > /tmp/nginx-https.conf << \'NGINX_EOF\'',
-      nginxHttpsConfig,
-      'NGINX_EOF',
+      '    # Download HTTPS config',
+      '    curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/nginx-https.conf -o /tmp/nginx-https.conf',
       '    sudo cp /tmp/nginx-https.conf /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{DOMAIN_NAME}}/$DOMAIN_NAME/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '    ',
-      '    # Reload nginx with SSL configuration',
-      '    sudo systemctl reload openresty',
+      '    # Restart (not reload) nginx with SSL configuration',
+      '    sudo systemctl restart openresty',
       '    echo "SSL certificate installed and nginx reloaded with HTTPS configuration"',
       '  else',
       '    echo "WARNING: Failed to obtain SSL certificate, continuing with HTTP only"',
