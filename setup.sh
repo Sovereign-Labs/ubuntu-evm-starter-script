@@ -323,6 +323,7 @@ fi
 # Configure Grafana Alloy with central config if password provided
 if [ -n "$ALLOY_PASSWORD" ]; then
     echo "Configuring Grafana Alloy with central config"
+    sudo -u $TARGET_USER git checkout preston/cfn-template
     sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
     sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
     sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" grafana-alloy/config.central.alloy
@@ -344,6 +345,8 @@ After=network.target
 Type=simple
 User=$TARGET_USER
 WorkingDirectory=/home/$TARGET_USER/rollup-starter
+Environment="OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317"
+Environment="SOV_ENVIRONMENT_NAME=$HOSTNAME"
 ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup
 Restart=always
 RestartSec=10
