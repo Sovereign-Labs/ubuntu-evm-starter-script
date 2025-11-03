@@ -42,6 +42,7 @@ QUICKNODE_HOST="${3:-}"
 CELESTIA_KEY_SEED="${4:-}"
 ROLLUP_GENESIS_FILE="${5:-}"
 ROLLUP_CONFIG_FILE="${6:-}"
+DATA_DIRECTORY=="${7:-}"
 ROLLUP_KEY_NAME="rollup-key"
 
 # Validate that QUICKNODE_HOST is a hostname, not a full URL
@@ -57,6 +58,14 @@ QUICKNODE_API_ENDPOINT="https://${QUICKNODE_HOST}/${QUICKNODE_API_TOKEN}/"
 # TODO: Check docker, curl, jq
 
 cd /home/"$TARGET_USER"
+
+# Symlking celestia data dirs if DATA_DIRECTORY is provided
+if [ -n "$DATA_DIRECTORY" ]; then
+    mkdir -p "$DATA_DIRECTORY"/celestia-light-mocha-4
+    mkdir -p "$DATA_DIRECTORY"/celestia-light
+    ln -s "$DATA_DIRECTORY"/celestia-light-mocha-4 /home/"$TARGET_USER"/.celestia-light-mocha-4
+    ln -s "$DATA_DIRECTORY"/celestia-light /home/"$TARGET_USER"/.celestia-light
+fi
 
 # Setup celestia binary
 yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha

@@ -134,19 +134,50 @@ sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.
 cd rollup-starter
 sudo -u $TARGET_USER git switch $BRANCH_NAME
 
-# Find the largest unmounted block device for rollup state storage
+# Find the largest and second largest unmounted block devices
 # This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
-LARGEST_UNMOUNTED=$(lsblk -ndo NAME,SIZE,MOUNTPOINT,TYPE | \
+UNMOUNTED_DEVICES=$(lsblk -ndo NAME,SIZE,MOUNTPOINT,TYPE | \
     awk 'NF==3 && $3=="disk" {print $2,$1}' | \
-    sort -hr | head -n1 | awk '{print $2}')
+    sort -hr)
+
+LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n1 | awk '{print $2}')
+SECOND_LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n2 | tail -n1 | awk '{print $2}')
 
 if [ -z "$LARGEST_UNMOUNTED" ]; then
     echo "Error: No unmounted block devices found. Cannot set up rollup-state storage."
     exit 1
 fi
+if [ -z "$SECOND_LARGEST_UNMOUNTED" ]; then
+    echo "Error: No second unmounted block device found. Logs will be stored on the root volume."
+    exit 1
+fi
 
 DEVICE="/dev/$LARGEST_UNMOUNTED"
 echo "Using $DEVICE (largest unmounted block device) for rollup-state storage"
+LOGS_DEVICE="/dev/$SECOND_LARGEST_UNMOUNTED"
+echo "Using $LOGS_DEVICE (second largest unmounted block device) for logs storage"
+
+# Mount the logs device and move all syslogging to it.
+sudo mkdir -p /mnt/logs && sudo mkfs.ext4 -F "$LOGS_DEVICE" && sudo mount "$LOGS_DEVICE" /mnt/logs
+if ! grep -q "$LOGS_DEVICE /mnt/logs" /etc/fstab; then
+    echo "$LOGS_DEVICE /mnt/logs ext4 defaults 0 2" | sudo tee -a /etc/fstab
+fi
+sudo rsync -av /var/log/ /mnt/logs/
+
+# Set proper permissions for /mnt/logs and common log files. Don't fail if the files don't exist
+sudo chown root:syslog /mnt/logs
+sudo chmod 755 /mnt/logs
+sudo chown -R syslog:adm /mnt/logs/syslog* 2>/dev/null || true
+sudo chown -R syslog:adm /mnt/logs/auth.log* 2>/dev/null || true
+sudo chown -R syslog:adm /mnt/logs/kern.log* 2>/dev/null || true
+sudo chown -R syslog:adm /mnt/logs/daemon.log* 2>/dev/null || true
+sudo chown -R syslog:adm /mnt/logs/user.log* 2>/dev/null || true
+sudo chown -R syslog:adm /mnt/logs/messages* 2>/dev/null || true
+sudo chmod 640 /mnt/logs/*.log* 2>/dev/null || true
+
+sudo sed -i 's|/var/log/|/mnt/logs/|g' /etc/rsyslog.d/50-default.conf
+sudo systemctl restart rsyslog
+
 
 # Check if rollup-state exists and is non-empty - if so, fail to prevent data loss
 ROLLUP_STATE_DIR="/home/$TARGET_USER/rollup-starter/rollup-state"
@@ -160,6 +191,7 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
     # Remove the directory if it exists (but only contains .gitkeep or is empty)
     rm -rf "$ROLLUP_STATE_DIR"
 fi
+
 sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
 # Add the new directory to /etc/fstab if not already present
 if ! grep -q "$DEVICE $ROLLUP_STATE_DIR" /etc/fstab; then
@@ -167,6 +199,7 @@ if ! grep -q "$DEVICE $ROLLUP_STATE_DIR" /etc/fstab; then
 fi
 sudo systemctl daemon-reload
 sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
+
 
 
 # Put docker's data on our newly mounted disk
@@ -253,26 +286,20 @@ sudo apt-get install -y docker-compose-plugin
 
 # Configure systemd journal to use the larger mounted disk
 # Use bind mount to redirect journal to larger disk
-JOURNAL_DIR="$ROLLUP_STATE_DIR/logs/journal"
+JOURNAL_DIR="/mnt/logs/journal"
 
 echo "Configuring journal to use larger disk"
 sudo mkdir -p "$JOURNAL_DIR"
 sudo chown root:systemd-journal "$JOURNAL_DIR"
 sudo chmod 2755 "$JOURNAL_DIR"
 
-ln -s $JOURNAL_DIR /var/log/journal
-echo "Created symlink from /var/log/journal to $JOURNAL_DIR"
-
-# # Use bind mount to redirect /var/log/journal to the larger disk
-# # This is the cleanest way - journald just writes to /var/log/journal as normal
-# if ! mountpoint -q /var/log/journal; then
-#     sudo mkdir -p /var/log/journal
-#     sudo mount --bind "$JOURNAL_DIR" /var/log/journal
-#     # Add to fstab to persist across reboots
-#     if ! grep -q "$JOURNAL_DIR /var/log/journal" /etc/fstab; then
-#         echo "$JOURNAL_DIR /var/log/journal none bind 0 0" | sudo tee -a /etc/fstab
-#     fi
-# fi
+if [ ! -L /var/log/journal ]; then
+    sudo ln -s $JOURNAL_DIR /var/log/journal
+    echo "Created symlink from /var/log/journal to $JOURNAL_DIR"
+else
+    echo "ERROR: Symlink /var/log/journal already exists"
+    exit 1
+fi
 
 # Configure journal limits - 50G is safe on the large mounted disk
 echo "Restarting journald"
@@ -296,10 +323,12 @@ else
 	# This probably work, but needs to be double checked
     ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
     ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
+    CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
+    mkdir -p "$CELESTIA_DATA_DIR"
 
 	# Run the Celestia setup script (use absolute path)
 	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
-	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\""
+	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\""
 fi
 
 
@@ -321,15 +350,14 @@ else
 fi
 
 # Configure Grafana Alloy with central config if password provided
-if [ -n "$ALLOY_PASSWORD" ]; then
+if [ -n "$ALLOY_PASSWORD" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring Grafana Alloy with central config"
     sudo -u $TARGET_USER git checkout preston/cfn-template
     sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
     sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
-    sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" grafana-alloy/config.central.alloy
     sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" grafana-alloy/config.central.alloy
 else
-    echo "Alloy password not provided, using local config"
+    echo "Alloy password not provided (or missing monitoring hostname), using local config"
 fi
 
 sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
