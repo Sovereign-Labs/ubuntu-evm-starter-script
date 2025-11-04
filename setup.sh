@@ -251,7 +251,7 @@ fi
 echo "Updating postgres connection string in config files"
 cd /home/$TARGET_USER/rollup-starter
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
-sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
+sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres_connection_string|postgres_connection_string|g" {} \; # Uncomment the postgres connection string
 if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
     echo "Updating mock DA connection string in config files"
     sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|connection_string = \"sqlite://rollup-state/mock_da.sqlite?mode=rwc\"|connection_string = \"$MOCK_DA_CONNECTION_STRING\"|g" {} \; 
