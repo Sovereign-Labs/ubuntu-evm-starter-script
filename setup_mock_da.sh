@@ -25,6 +25,7 @@ INFLUX_TOKEN=""
 HOSTNAME=""
 ALLOY_PASSWORD=""
 BRANCH_NAME="preston/update-to-nightly"
+MONITORING_URL=""
 MOCK_DA_CONNECTION_STRING=""
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +50,10 @@ while [[ $# -gt 0 ]]; do
             MOCK_DA_CONNECTION_STRING="$2"
             shift 2
             ;;
+		--monitoring-url)
+			MONITORING_URL="$2"
+			shift 2
+			;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
             echo "  --monitoring-url <string>            : Monitoring instance URL for metrics (optional, do not include http://)"
