@@ -6,7 +6,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { Construct } from 'constructs';
-import { ComputeInfrastructure } from './compute-infrastructure';
+import { ComputeInfrastructure, MOCK_DATABASE_NAME } from './compute-infrastructure';
 
 export class SovRollupCdkStarterStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -148,6 +148,52 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       monitoringInterval: cdk.Duration.seconds(60),
     });
 
+
+    // Create condition for when Celestia is NOT provided
+    const createMockDa = new cdk.CfnCondition(this, 'CreateMockDa', {
+      expression: cdk.Fn.conditionEquals(celestiaSeedParam.valueAsString, '')
+    });
+
+    // Create Aurora postgres cluster. This gives multi-AZ durability by default and should perform better than managed postgres.
+    const mockDatabaseCluster = new rds.DatabaseCluster(this, 'SovRollupMockDatabaseCluster', {
+        engine: rds.DatabaseClusterEngine.auroraPostgres({
+          version: rds.AuroraPostgresEngineVersion.VER_17_5
+        }),
+        vpc,
+        securityGroups: [rdsSecurityGroup],
+        defaultDatabaseName: MOCK_DATABASE_NAME,
+        credentials: rds.Credentials.fromUsername(dbUsernameParam.valueAsString),
+        writer: rds.ClusterInstance.provisioned('writer', {
+          // Use graviton3-based instances for better price/performance
+          instanceType: ec2.InstanceType.of(ec2.InstanceClass.R8G, ec2.InstanceSize.LARGE),
+          enablePerformanceInsights: true,
+          publiclyAccessible: false,
+          // Place writer in same AZ as EC2 instances for lowest latency
+          availabilityZone: cdk.Stack.of(this).availabilityZones[0]
+        }),
+        readers: [
+          // Start with one reader, can scale up later
+          rds.ClusterInstance.provisioned('reader1', {
+            instanceType: ec2.InstanceType.of(ec2.InstanceClass.R8G, ec2.InstanceSize.LARGE),
+            enablePerformanceInsights: true,
+            publiclyAccessible: false,
+            // Place reader in different AZ for high availability
+            availabilityZone: cdk.Stack.of(this).availabilityZones[1]
+          })
+        ],
+        backup: {
+          retention: cdk.Duration.days(7)
+        },
+        removalPolicy: cdk.RemovalPolicy.DESTROY, // For development - change for production
+        deletionProtection: false, // For development - set to true for production
+        storageEncrypted: true,
+        // Enable enhanced monitoring for better observability
+        monitoringInterval: cdk.Duration.seconds(60),
+      });
+
+    // Apply condition to the mock database cluster
+    (mockDatabaseCluster.node.defaultChild as cdk.CfnResource).cfnOptions.condition = createMockDa;
+
     // Create compute infrastructure with database information
     const computeInfra = new ComputeInfrastructure(this, 'SovRollupCompute', {
       vpc,
@@ -163,6 +209,7 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       influxToken: influxTokenParam.valueAsString || undefined,
       alloyPassword: alloyPasswordParam.valueAsString || undefined,
       domainName: domainNameParam.valueAsString || undefined,
+      mockDatabaseCluster: mockDatabaseCluster,
     });
 
     // Allow connections from the compute instances to RDS

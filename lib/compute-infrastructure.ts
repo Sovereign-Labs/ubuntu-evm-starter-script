@@ -8,6 +8,7 @@ import { assert } from 'console';
 
 export const MAX_NODE_SETUP_TIME_MINUTES = 15;
 
+export const MOCK_DATABASE_NAME = 'mock_da_postgres';
 export interface ComputeInfrastructureProps {
   vpc: ec2.Vpc;
   healthCheckPort: number;
@@ -22,7 +23,7 @@ export interface ComputeInfrastructureProps {
   influxToken?: string; // Optional: InfluxDB token
   alloyPassword?: string; // Optional: Alloy password for monitoring authentication
   domainName?: string; // Optional: Domain name for SSL certificate
-  // grafanaPassword?: string; // Optional: Password for Grafana basic auth (defaults to 'grafana-admin')
+  mockDatabaseCluster?: rds.DatabaseCluster; // Optional: Mock database cluster for testing
 }
 
 export class ComputeInfrastructure extends Construct {
@@ -158,7 +159,7 @@ export class ComputeInfrastructure extends Construct {
       'apt-get install -y git curl awscli jq',
       '',
       '# Get EC2 instance ID for hostname',
-      'INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
+      'export INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
       'echo "Instance ID: $INSTANCE_ID"',
       '',
       '# Download the latest setup script from master branch',
@@ -193,20 +194,55 @@ export class ComputeInfrastructure extends Construct {
       `DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)`,
       '',
       '# Construct database connection string',
-      `DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${dbHost}:${dbPort}/${dbName}"`,
+      `export DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${dbHost}:${dbPort}/${dbName}"`,
       'echo "Database connection string constructed (password hidden)"',
       ''
     );
+
+    // Add mock database setup conditionally - only if we're not using Celestia
+    const hasMockDb = props.mockDatabaseCluster !== undefined;
+    if (hasMockDb && props.mockDatabaseCluster!.secret) {
+      const mockSecretArn = props.mockDatabaseCluster!.secret.secretArn;
+      const mockDbHost = props.mockDatabaseCluster!.clusterEndpoint.hostname;
+      const mockDbPort = props.mockDatabaseCluster!.clusterEndpoint.port;
+      const mockDbName = MOCK_DATABASE_NAME;
+      
+      baseCommands.push(
+        '# Check if we should use mock DA (when Celestia is not configured)',
+        `if [ -z "${props.celestiaSeed || ''}" ]; then`,
+        '  # Retrieve mockda database credentials from Secrets Manager',
+        '  echo "Retrieving mockda database credentials..."',
+        `  SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${mockSecretArn} --region ${region} --query SecretString --output text)`,
+        '  DB_USERNAME=$(echo $SECRET_JSON | jq -r .username)',
+        '  DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)',
+        '',
+        '  # Construct database connection string',
+        `  export MOCK_DA_DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${mockDbHost}:${mockDbPort}/${mockDbName}"`,
+        '  echo "Mock DA connection string constructed (password hidden)"',
+        'else',
+        '  echo "Celestia seed provided, skipping mock DA setup"',
+        'fi',
+        ''
+      );
+    }
     
     const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
     const monitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
     const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
     const alloyPasswordArg = props.alloyPassword ? ` --alloy-password "${props.alloyPassword}"` : '';
-    setupCommand = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID" '`;
+    const quicknodeTokenArg = props.quicknodeApiToken ? ` --quicknode-token "${props.quicknodeApiToken}"` : '';
+    const quicknodeHostArg = props.quicknodeHost ? ` --quicknode-host "${props.quicknodeHost}"` : '';
+    const celestiaSeedArg = props.celestiaSeed ? ` --celestia-seed "${props.celestiaSeed}"` : '';
+    const mockDaArg = hasMockDb && !props.celestiaSeed ? ' --mock-da-connection-string "$MOCK_DA_DATABASE_URL"' : '';
+    const mockDaEnvVar = hasMockDb && !props.celestiaSeed ? ' MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL"' : '';
+    
+    setupCommand = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaArg}'`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
       'echo "Executing setup script as ubuntu user..."',
+      'echo "DATABASE_URL is: $DATABASE_URL"',
+      'echo "MOCK_DA_DATABASE_URL is: $MOCK_DA_DATABASE_URL"',
       setupCommand,
       'echo "User data script completed at $(date)"'
     );
@@ -225,7 +261,13 @@ export class ComputeInfrastructure extends Construct {
       const monitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
       const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
       const alloyPasswordArg = props.alloyPassword ? ` --alloy-password "${props.alloyPassword}"` : '';
-      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL" --quicknode-token "${props.quicknodeApiToken || ''}" --quicknode-host "${props.quicknodeHost || ''}" --celestia-seed "${props.celestiaSeed || ''}"${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID" '`;
+      const quicknodeTokenArg = props.quicknodeApiToken ? ` --quicknode-token "${props.quicknodeApiToken}"` : '';
+      const quicknodeHostArg = props.quicknodeHost ? ` --quicknode-host "${props.quicknodeHost}"` : '';
+      const celestiaSeedArg = props.celestiaSeed ? ` --celestia-seed "${props.celestiaSeed}"` : '';
+      const mockDaArg = hasMockDb && !props.celestiaSeed ? ' --mock-da-connection-string "$MOCK_DA_DATABASE_URL"' : '';
+      const mockDaEnvVar = hasMockDb && !props.celestiaSeed ? ' MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL"' : '';
+      
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaArg}'`;
     }
     
     secondaryUserData.addCommands(...secondaryBaseCommands);
@@ -306,7 +348,7 @@ export class ComputeInfrastructure extends Construct {
       launchTemplate: secondaryLaunchTemplate,
       minCapacity: 0, // Can scale to 0
       maxCapacity: 3,
-      desiredCapacity: 1, // NOTE: Update this to 1 after initial deployment
+      desiredCapacity: 0, // NOTE: Update this to 1 after initial deployment
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
         // Place secondary instances anywhere except the primary AZ. This way we're robust to that AZ going down.
