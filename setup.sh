@@ -2,14 +2,15 @@
 # Set up a fresh ubuntu 22.04 instance to run the rollup
 #
 # Usage: setup.sh [OPTIONS]
-#   --postgres-conn-string <string>  : Postgres connection string (optional, default: local postgres)
-#   --quicknode-token <string>       : Quicknode API token for Celestia (optional)
-#   --quicknode-host <string>        : Quicknode hostname for Celestia (optional)
-#   --celestia-seed <string>         : Celestia key seed phrase for recovery (optional)
-#   --monitoring-url <string>        : Monitoring URL for metrics (optional, do not include http://)
-#   --influx-token <string>          : InfluxDB authentication token (optional)
-#   --hostname <string>              : Hostname for metrics reporting (optional)
-#   --alloy-password <string>        : Grafana Alloy password for central config (optional)
+#   --postgres-conn-string <string>      : Postgres connection string (optional, default: local postgres)
+#   --quicknode-token <string>           : Quicknode API token for Celestia (optional)
+#   --quicknode-host <string>            : Quicknode hostname for Celestia (optional)
+#   --celestia-seed <string>             : Celestia key seed phrase for recovery (optional)
+#   --monitoring-url <string>            : Monitoring URL for metrics (optional, do not include http://)
+#   --influx-token <string>              : InfluxDB authentication token (optional)
+#   --hostname <string>                  : Hostname for metrics reporting (optional)
+#   --alloy-password <string>            : Grafana Alloy password for central config (optional)
+#   --mock-da-connection-string <string> : Postgres connection string for mock DA (optional)
 #
 #   Example: setup.sh --quicknode-token "abc123" --quicknode-host "restless-black-isle.celestia-mocha.quiknode.pro" --celestia-seed "word1 word2 ..."
 #   Example: setup.sh --postgres-conn-string "postgres://user:pass@host:5432/dbname" --quicknode-token "abc123" --quicknode-host "host" --celestia-seed "seed"
@@ -28,6 +29,7 @@ INFLUX_TOKEN=""
 HOSTNAME=""
 ALLOY_PASSWORD=""
 BRANCH_NAME="preston/update-to-nightly"
+MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
 
 while [[ $# -gt 0 ]]; do
@@ -68,22 +70,27 @@ while [[ $# -gt 0 ]]; do
             BRANCH_NAME="$2"
             shift 2
             ;;
+        --mock-da-connection-string)
+            MOCK_DA_CONNECTION_STRING="$2"
+            shift 2
+            ;;
         --is-primary)
             IS_PRIMARY=true
             shift
             ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
-            echo "  --postgres-conn-string <string>  : Postgres connection string (optional)"
-            echo "  --quicknode-token <string>       : Quicknode API token (optional)"
-            echo "  --quicknode-host <string>        : Quicknode hostname (optional)"
-            echo "  --celestia-seed <string>         : Celestia key seed phrase (optional)"
-            echo "  --monitoring-url <string>        : Monitoring instance URL for metrics (optional, do not include http://)"
-            echo "  --influx-token <string>          : InfluxDB authentication token (optional)"
-            echo "  --hostname <string>              : Hostname of this box for metrics reporting (optional)"
-            echo "  --alloy-password <string>        : Grafana Alloy password for central config (optional)"
-            echo "  --branch-name <string>           : Branch name to checkout (optional)"
-            echo "  --is-primary                     : Set this node as primary (optional, default: replica)"
+            echo "  --postgres-conn-string <string>      : Postgres connection string (optional)"
+            echo "  --quicknode-token <string>           : Quicknode API token (optional)"
+            echo "  --quicknode-host <string>            : Quicknode hostname (optional)"
+            echo "  --celestia-seed <string>             : Celestia key seed phrase (optional)"
+            echo "  --monitoring-url <string>            : Monitoring instance URL for metrics (optional, do not include http://)"
+            echo "  --influx-token <string>              : InfluxDB authentication token (optional)"
+            echo "  --hostname <string>                  : Hostname of this box for metrics reporting (optional)"
+            echo "  --alloy-password <string>            : Grafana Alloy password for central config (optional)"
+            echo "  --branch-name <string>               : Branch name to checkout (optional)"
+            echo "  --mock-da-connection-string <string> : Postgres connection string for mock DA (optional)"
+            echo "  --is-primary                         : Set this node as primary (optional, default: replica)"
             exit 0
             ;;
         *)
@@ -245,6 +252,10 @@ echo "Updating postgres connection string in config files"
 cd /home/$TARGET_USER/rollup-starter
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \;
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres://postgres:sequencerdb@localhost:5432/rollup|$POSTGRES_CONN_STRING|g" {} \; # Still replace if the line is commented out
+if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
+    echo "Updating mock DA connection string in config files"
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|connection_string = \"sqlite://rollup-state/mock_da.sqlite?mode=rwc\"|connection_string = \"$MOCK_DA_CONNECTION_STRING\"|g" {} \; 
+fi
 
 # Update is_replica setting based on --is-primary flag
 if [ "$IS_PRIMARY" = true ]; then
