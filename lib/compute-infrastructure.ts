@@ -93,6 +93,13 @@ export class ComputeInfrastructure extends Construct {
       'Allow proxy to connect to Grafana'
     );
 
+    // Allow Primary ASG instances to connect to Mock DA server on port 50051
+    this.securityGroup.addIngressRule(
+      this.securityGroup,
+      ec2.Port.tcp(50051),
+      'Allow rollup instances to connect to Mock DA server'
+    );
+
     // Create IAM role for EC2 instances
     this.ec2Role = new iam.Role(this, 'Ec2Role', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
@@ -132,6 +139,11 @@ export class ComputeInfrastructure extends Construct {
 
     // Grant access to database secret
     props.databaseCluster.secret!.grantRead(this.ec2Role);
+    
+    // Grant access to mock database secret if it exists
+    if (props.mockDatabaseCluster && props.mockDatabaseCluster.secret) {
+      props.mockDatabaseCluster.secret.grantRead(this.ec2Role);
+    }
 
     // Create a new key pair to ssh into the instances
     this.keyPair = new ec2.KeyPair(this, 'KeyPair', {
@@ -164,8 +176,8 @@ export class ComputeInfrastructure extends Construct {
       '',
       '# Download the latest setup script from master branch',
       'echo "Downloading setup scripts from GitHub..."',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup.sh -o /tmp/setup.sh',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup_celestia_quicknode.sh -o /tmp/setup_celestia_quicknode.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup.sh -o /tmp/setup.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup_celestia_quicknode.sh -o /tmp/setup_celestia_quicknode.sh',
       '',
       '# Make them executable and owned by ubuntu user',
       'chmod +x /tmp/setup.sh',
@@ -200,32 +212,12 @@ export class ComputeInfrastructure extends Construct {
     );
 
     // Add mock database setup conditionally - only if we're not using Celestia
-    const hasMockDb = props.mockDatabaseCluster !== undefined;
-    if (hasMockDb && props.mockDatabaseCluster!.secret) {
-      const mockSecretArn = props.mockDatabaseCluster!.secret.secretArn;
-      const mockDbHost = props.mockDatabaseCluster!.clusterEndpoint.hostname;
-      const mockDbPort = props.mockDatabaseCluster!.clusterEndpoint.port;
-      const mockDbName = MOCK_DATABASE_NAME;
-      
-      baseCommands.push(
-        '# Check if we should use mock DA (when Celestia is not configured)',
-        `if [ -z "${props.celestiaSeed || ''}" ]; then`,
-        '  # Retrieve mockda database credentials from Secrets Manager',
-        '  echo "Retrieving mockda database credentials..."',
-        `  SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${mockSecretArn} --region ${region} --query SecretString --output text)`,
-        '  DB_USERNAME=$(echo $SECRET_JSON | jq -r .username)',
-        '  DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)',
-        '',
-        '  # Construct database connection string',
-        `  export MOCK_DA_DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${mockDbHost}:${mockDbPort}/${mockDbName}"`,
-        '  echo "Mock DA connection string constructed (password hidden)"',
-        'else',
-        '  echo "Celestia seed provided, skipping mock DA setup"',
-        'fi',
-        ''
-      );
-    }
     
+    baseCommands.push(
+      '# Debug mock DA setup conditions',
+      `echo "celestiaSeed: '${props.celestiaSeed || ''}'"`,
+      ''
+    );
     const branchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
     const monitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
     const influxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
@@ -233,16 +225,71 @@ export class ComputeInfrastructure extends Construct {
     const quicknodeTokenArg = props.quicknodeApiToken ? ` --quicknode-token "${props.quicknodeApiToken}"` : '';
     const quicknodeHostArg = props.quicknodeHost ? ` --quicknode-host "${props.quicknodeHost}"` : '';
     const celestiaSeedArg = props.celestiaSeed ? ` --celestia-seed "${props.celestiaSeed}"` : '';
-    const mockDaArg = hasMockDb && !props.celestiaSeed ? ' --mock-da-connection-string "$MOCK_DA_DATABASE_URL"' : '';
-    const mockDaEnvVar = hasMockDb && !props.celestiaSeed ? ' MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL"' : '';
+    const mockDaUrlArg = ` --mock-da-connection-string "$MOCK_DA_SERVER_IP"`;
+    const mockDaUrlEnvVar = ` MOCK_DA_SERVER_IP="$MOCK_DA_SERVER_IP"`;
+    baseCommands.push(
+      '# Function to get mockda server instance IP',
+      'get_mockda_server_ip() {',
+      '  local stack_name="' + cdk.Stack.of(this).stackName + '"',
+      '  # Find ASG name using tags',
+      '  local asg_name=$(aws autoscaling describe-auto-scaling-groups \\',
+      '    --region ' + cdk.Stack.of(this).region + ' \\',
+      '    --query "AutoScalingGroups[?Tags[?Key==\'Stack\' && Value==\'${stack_name}\'] && Tags[?Key==\'ASGType\' && Value==\'MockDaServer\']].AutoScalingGroupName" \\',
+      '    --output text | head -1)',
+      '  ',
+      '  if [ -n "$asg_name" ]; then',
+      '    local instance_id=$(aws autoscaling describe-auto-scaling-groups \\',
+      '      --auto-scaling-group-names "$asg_name" \\',
+      '      --region ' + cdk.Stack.of(this).region + ' \\',
+      '      --query "AutoScalingGroups[0].Instances[0].InstanceId" \\',
+      '      --output text)',
+      '    ',
+      '    if [ "$instance_id" != "None" ] && [ -n "$instance_id" ]; then',
+      '      aws ec2 describe-instances \\',
+      '        --instance-ids "$instance_id" \\',
+      '        --region ' + cdk.Stack.of(this).region + ' \\',
+      '        --query "Reservations[0].Instances[0].PrivateIpAddress" \\',
+      '        --output text',
+      '    else',
+      '      echo ""',
+      '    fi',
+      '  else',
+      '    echo ""',
+      '  fi',
+      '}',
+      '',
+      '# Wait for mock DA ASG instance to be available',
+      'MOCK_DA_SERVER_IP=""',
+      'for i in {1..30}; do',
+      '  MOCK_DA_SERVER_IP=$(get_mockda_server_ip)',
+      '  if [ -n "$MOCK_DA_SERVER_IP" ] && [ "$MOCK_DA_SERVER_IP" != "None" ]; then',
+      '    echo "Found mockda server instance IP: $MOCK_DA_SERVER_IP"',
+      '    export MOCK_DA_SERVER_IP',
+      '    break',
+      '  fi',
+      '  echo "Waiting for mock da ASG instance... (attempt $i/30)"',
+      '  sleep 10',
+      'done',
+      '',
+      'if [ -z "$MOCK_DA_SERVER_IP" ] || [ "$MOCK_DA_SERVER_IP" == "None" ]; then',
+      '  echo "ERROR: Could not find mock da ASG instance IP"',
+      '  echo "Mock DA server will not be available for this rollup instance"',
+      '  MOCK_DA_SERVER_IP=""',
+      '  export MOCK_DA_SERVER_IP',
+      'fi',
+    );
     
-    setupCommand = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaArg}'`;
+    setupCommand = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaUrlEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --is-primary --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaUrlArg}'`;
 
     baseCommands.push(
       '# Execute the setup script as ubuntu user with sudo privileges',
       'echo "Executing setup script as ubuntu user..."',
       'echo "DATABASE_URL is: $DATABASE_URL"',
-      'echo "MOCK_DA_DATABASE_URL is: $MOCK_DA_DATABASE_URL"',
+      'echo "MOCK_DA_SERVER_IP is: $MOCK_DA_SERVER_IP"',
+      `echo "mockDaUrlArg: '${mockDaUrlArg}'"`,
+      `echo "mockDaUrlEnvVar: '${mockDaUrlEnvVar}'"`,
+      'echo "Setup command about to run:"',
+      `echo "${setupCommand}"`,
       setupCommand,
       'echo "User data script completed at $(date)"'
     );
@@ -264,10 +311,10 @@ export class ComputeInfrastructure extends Construct {
       const quicknodeTokenArg = props.quicknodeApiToken ? ` --quicknode-token "${props.quicknodeApiToken}"` : '';
       const quicknodeHostArg = props.quicknodeHost ? ` --quicknode-host "${props.quicknodeHost}"` : '';
       const celestiaSeedArg = props.celestiaSeed ? ` --celestia-seed "${props.celestiaSeed}"` : '';
-      const mockDaArg = hasMockDb && !props.celestiaSeed ? ' --mock-da-connection-string "$MOCK_DA_DATABASE_URL"' : '';
-      const mockDaEnvVar = hasMockDb && !props.celestiaSeed ? ' MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL"' : '';
+      const mockDaUrlArg = ` --mock-da-connection-string "$MOCK_DA_SERVER_IP"`;
+      const mockDaUrlEnvVar = ` MOCK_DA_SERVER_IP="$MOCK_DA_SERVER_IP"`;
       
-      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaArg}'`;
+      secondaryBaseCommands[setupCommandIndex] = `sudo -u ubuntu -H DATABASE_URL="$DATABASE_URL"${mockDaUrlEnvVar} INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh --postgres-conn-string "$DATABASE_URL"${quicknodeTokenArg}${quicknodeHostArg}${celestiaSeedArg}${branchArg}${monitoringUrlArg}${influxTokenArg}${alloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaUrlArg}'`;
     }
     
     secondaryUserData.addCommands(...secondaryBaseCommands);
@@ -366,6 +413,121 @@ export class ComputeInfrastructure extends Construct {
     cdk.Tags.of(secondaryAsg).add('ASGType', 'Secondary');
     cdk.Tags.of(secondaryAsg).add('Stack', cdk.Stack.of(this).stackName);
 
+    // Create custom user data for Mock DA server
+    const mockDaUserData = ec2.UserData.forLinux();
+
+     // Base commands
+     mockDaUserData.addCommands(
+      '#!/bin/bash',
+      'set -e',
+      '',
+      '# Log all output to file for debugging',
+      'exec > >(tee -a /var/log/user-data.log)',
+      'exec 2>&1',
+      '',
+      'echo "Starting user data script at $(date)"',
+      '',
+      '# Install dependencies',
+      'apt-get update',
+      'apt-get install -y git curl awscli jq',
+      '',
+      '# Get EC2 instance ID for hostname',
+      'export INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)',
+      'echo "Instance ID: $INSTANCE_ID"',
+      '',
+      '# Download the latest setup script from master branch',
+      'echo "Downloading setup scripts from GitHub..."',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup_mock_da.sh -o /tmp/setup.sh',
+      '',
+      '# Make them executable and owned by ubuntu user',
+      'chmod +x /tmp/setup.sh',
+      'chown ubuntu:ubuntu /tmp/setup.sh',
+    );
+
+    // Add mock database credentials retrieval for the mock DA server
+      const mockSecretArn = props.mockDatabaseCluster?.secret?.secretArn;
+      const mockDbHost = props.mockDatabaseCluster!.clusterEndpoint.hostname;
+      const mockDbPort = props.mockDatabaseCluster!.clusterEndpoint.port;
+      const mockDbName = MOCK_DATABASE_NAME;
+      
+      mockDaUserData.addCommands(
+        '# Retrieve mock database credentials from Secrets Manager',
+        'echo "Retrieving mock database credentials..."',
+        `SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${mockSecretArn} --region ${region} --query SecretString --output text)`,
+        'DB_USERNAME=$(echo $SECRET_JSON | jq -r .username)',
+        'DB_PASSWORD=$(echo $SECRET_JSON | jq -r .password)',
+        '',
+        '# Construct database connection string',
+        `export MOCK_DA_DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@${mockDbHost}:${mockDbPort}/${mockDbName}"`,
+        'echo "Mock DA database connection string constructed (password hidden)"',
+        ''
+      );
+
+    // Create the setup command for mock DA server with proper variables
+    const mockDaBranchArg = props.branchName ? ` --branch-name "${props.branchName}"` : '';
+    const mockDaMonitoringUrlArg = props.monitoringUrl ? ` --monitoring-url "${props.monitoringUrl}"` : '';
+    const mockDaInfluxTokenArg = props.influxToken ? ` --influx-token "${props.influxToken}"` : '';
+    const mockDaAlloyPasswordArg = props.alloyPassword ? ` --alloy-password "${props.alloyPassword}"` : '';
+    const mockDaDatabaseArg = ' --mock-da-connection-string "$MOCK_DA_DATABASE_URL"';
+
+    const mockDaSetupCommand = `sudo -u ubuntu -H MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL" INSTANCE_ID="$INSTANCE_ID" bash -c 'sudo /tmp/setup.sh${mockDaBranchArg}${mockDaMonitoringUrlArg}${mockDaInfluxTokenArg}${mockDaAlloyPasswordArg} --hostname "$INSTANCE_ID"${mockDaDatabaseArg}'`;
+    
+    mockDaUserData.addCommands(
+      '# Execute the setup script as ubuntu user with sudo privileges',
+      'echo "Executing mock DA setup script as ubuntu user..."',
+      'echo "MOCK_DA_DATABASE_URL is: $MOCK_DA_DATABASE_URL"',
+      mockDaSetupCommand,
+      'echo "Mock DA user data script completed at $(date)"'
+    );
+
+    // Create custom launch template for Mock DA server with its user data
+    const mockDaLaunchTemplate = new ec2.LaunchTemplate(this, 'MockDaLaunchTemplate', {
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C8G, ec2.InstanceSize.XLARGE2),
+      machineImage: ec2.MachineImage.fromSsmParameter(
+        '/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id',
+        {
+          os: ec2.OperatingSystemType.LINUX
+        }
+      ),
+      securityGroup: this.securityGroup,
+      role: this.ec2Role,
+      userData: mockDaUserData,
+      blockDevices: [{
+        deviceName: '/dev/sda1',
+        volume: ec2.BlockDeviceVolume.ebs(128, {
+          volumeType: ec2.EbsDeviceVolumeType.GP3,
+          encrypted: true
+        })
+      }]
+    });
+
+    // Create OpenResty Auto Scaling Group (same AZ as primary to avoid cross-AZ data charges)
+    const mockDaServerAsg = new autoscaling.AutoScalingGroup(this, 'MockDaServerAsg', {
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        availabilityZones: [primaryAz] // Same AZ as primary ASG
+      },
+      launchTemplate: mockDaLaunchTemplate,
+      minCapacity: 1,
+      maxCapacity: 1,
+      desiredCapacity: 1,
+      healthChecks: autoscaling.HealthChecks.ec2({
+        gracePeriod: cdk.Duration.minutes(15)
+      }),
+      // updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({
+      //   maxBatchSize: 1,
+      //   minInstancesInService: 0,
+      //   pauseTime: cdk.Duration.minutes(5)
+      // })
+    });
+
+    // Tag OpenResty instances
+    cdk.Tags.of(mockDaServerAsg).add('Name', `${cdk.Stack.of(this).stackName}-mock-da-server`);
+    cdk.Tags.of(mockDaServerAsg).add('Service', 'mock-da-server');
+    cdk.Tags.of(mockDaServerAsg).add('ASGType', 'MockDaServer');
+    cdk.Tags.of(mockDaServerAsg).add('Stack', cdk.Stack.of(this).stackName);
+
     // Create OpenResty Auto Scaling Group (same AZ as primary to avoid cross-AZ data charges)
     const proxyAsg = new autoscaling.AutoScalingGroup(this, 'ProxyAsg', {
       vpc: props.vpc,
@@ -439,7 +601,7 @@ export class ComputeInfrastructure extends Construct {
       'fi',
       '',
       '# Download nginx configuration file (HTTP-only for all cases initially - we need the proxy to be running to pass an ACME challenge to get a TLS certificate before we can use the full config)',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/nginx-http-only.conf -o /tmp/nginx-http-only.conf',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/nginx-http-only.conf -o /tmp/nginx-http-only.conf',
     ];
     
     // Add all base commands
@@ -537,7 +699,7 @@ export class ComputeInfrastructure extends Construct {
       '  # If certificate was obtained, switch to HTTPS config',
       '  if [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]; then',
       '    # Download HTTPS config',
-      '    curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/nginx-https.conf -o /tmp/nginx-https.conf',
+      '    curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/nginx-https.conf -o /tmp/nginx-https.conf',
       '    sudo cp /tmp/nginx-https.conf /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
@@ -567,7 +729,7 @@ export class ComputeInfrastructure extends Construct {
 
     // Create custom launch template for OpenResty with its user data
     const proxyLaunchTemplate = new ec2.LaunchTemplate(this, 'ProxyLaunchTemplate', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.LARGE),
       machineImage: new ec2.AmazonLinuxImage({
         generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
       }),
