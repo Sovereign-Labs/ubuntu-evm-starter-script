@@ -107,7 +107,7 @@ sudo -u $TARGET_USER git switch $BRANCH_NAME
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
 echo "Building mock da as $TARGET_USER"
-sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --bin mock-da-server'
+sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --no-default-features --features=mock_da_external,mock_zkvm'
 cd /home/$TARGET_USER
 
 # Check that the mock da connection string was provided
