@@ -176,8 +176,8 @@ export class ComputeInfrastructure extends Construct {
       '',
       '# Download the latest setup script from master branch',
       'echo "Downloading setup scripts from GitHub..."',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup.sh -o /tmp/setup.sh',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup_celestia_quicknode.sh -o /tmp/setup_celestia_quicknode.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/blaze/mockda/setup.sh -o /tmp/setup.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/blaze/mockda/setup_celestia_quicknode.sh -o /tmp/setup_celestia_quicknode.sh',
       '',
       '# Make them executable and owned by ubuntu user',
       'chmod +x /tmp/setup.sh',
@@ -437,7 +437,7 @@ export class ComputeInfrastructure extends Construct {
       '',
       '# Download the latest setup script from master branch',
       'echo "Downloading setup scripts from GitHub..."',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/setup_mock_da.sh -o /tmp/setup.sh',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/blaze/mockda/setup_mock_da.sh -o /tmp/setup.sh',
       '',
       '# Make them executable and owned by ubuntu user',
       'chmod +x /tmp/setup.sh',
@@ -601,7 +601,7 @@ export class ComputeInfrastructure extends Construct {
       'fi',
       '',
       '# Download nginx configuration file (HTTP-only for all cases initially - we need the proxy to be running to pass an ACME challenge to get a TLS certificate before we can use the full config)',
-      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/nginx-http-only.conf -o /tmp/nginx-http-only.conf',
+      'curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/blaze/mockda/nginx-http-only.conf -o /tmp/nginx-http-only.conf',
     ];
     
     // Add all base commands
@@ -699,7 +699,7 @@ export class ComputeInfrastructure extends Construct {
       '  # If certificate was obtained, switch to HTTPS config',
       '  if [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]; then',
       '    # Download HTTPS config',
-      '    curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/mockda/nginx-https.conf -o /tmp/nginx-https.conf',
+      '    curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/blaze/mockda/nginx-https.conf -o /tmp/nginx-https.conf',
       '    sudo cp /tmp/nginx-https.conf /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_LEADER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
       '    sudo sed -i "s/{{ROLLUP_FOLLOWER_IP}}/$PRIMARY_IP/g" /usr/local/openresty/nginx/conf/nginx.conf',
