@@ -219,6 +219,11 @@ export class SovRollupCdkStarterStack extends cdk.Stack {
       'Allow PostgreSQL connections from compute instances'
     );
 
+    // Output the Branch Name
+    new cdk.CfnOutput(this, 'BranchNameOutput', {
+      value: branchNameParam.valueAsString,
+    });
+    
     // Output the Auto Scaling Group names
     new cdk.CfnOutput(this, 'PrimaryAutoScalingGroupName', {
       value: computeInfra.primaryAsg.autoScalingGroupName,

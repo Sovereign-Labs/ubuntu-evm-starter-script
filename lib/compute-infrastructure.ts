@@ -289,7 +289,7 @@ export class ComputeInfrastructure extends Construct {
       `echo "mockDaUrlArg: '${mockDaUrlArg}'"`,
       `echo "mockDaUrlEnvVar: '${mockDaUrlEnvVar}'"`,
       'echo "Setup command about to run:"',
-      `echo "${setupCommand}"`,
+      `echo "Setup command: ${setupCommand}"`,
       setupCommand,
       'echo "User data script completed at $(date)"'
     );
