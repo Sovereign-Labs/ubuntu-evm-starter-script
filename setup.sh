@@ -166,8 +166,10 @@ echo "Using $LOGS_DEVICE (second largest unmounted block device) for logs storag
 
 # Mount the logs device and move all syslogging to it.
 sudo mkdir -p /mnt/logs && sudo mkfs.ext4 -F "$LOGS_DEVICE" && sudo mount "$LOGS_DEVICE" /mnt/logs
-if ! grep -q "$LOGS_DEVICE /mnt/logs" /etc/fstab; then
-    echo "$LOGS_DEVICE /mnt/logs ext4 defaults 0 2" | sudo tee -a /etc/fstab
+# Get UUID of the logs device for stable fstab entry
+LOGS_UUID=$(sudo blkid -s UUID -o value "$LOGS_DEVICE")
+if ! grep -q "/mnt/logs" /etc/fstab; then
+    echo "UUID=$LOGS_UUID /mnt/logs ext4 defaults 0 2" | sudo tee -a /etc/fstab
 fi
 sudo rsync -av /var/log/ /mnt/logs/
 
@@ -183,6 +185,7 @@ sudo chown -R syslog:adm /mnt/logs/messages* 2>/dev/null || true
 sudo chmod 640 /mnt/logs/*.log* 2>/dev/null || true
 
 sudo sed -i 's|/var/log/|/mnt/logs/|g' /etc/rsyslog.d/50-default.conf
+sudo sed -i 's|/var/log/|/mnt/logs/|g' /etc/logrotate.d/rsyslog
 sudo systemctl restart rsyslog
 
 
@@ -200,9 +203,11 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
 fi
 
 sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
+# Get UUID of the rollup-state device for stable fstab entry
+ROLLUP_STATE_UUID=$(sudo blkid -s UUID -o value "$DEVICE")
 # Add the new directory to /etc/fstab if not already present
-if ! grep -q "$DEVICE $ROLLUP_STATE_DIR" /etc/fstab; then
-    echo "$DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
+    echo "UUID=$ROLLUP_STATE_UUID $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
 fi
 sudo systemctl daemon-reload
 sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
