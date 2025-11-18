@@ -45,6 +45,15 @@ ROLLUP_CONFIG_FILE="${6:-}"
 DATA_DIRECTORY=="${7:-}"
 ROLLUP_KEY_NAME="rollup-key"
 
+
+echo "TARGET_USER: $TARGET_USER"
+echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
+echo "CELESTIA_KEY_SEED: $CELESTIA_KEY_SEED"
+echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
+echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
+echo "DATA_DIRECTORY: $DATA_DIRECTORY"
+echo "ROLLUP_KEY_NAME: $ROLLUP_KEY_NAME"
+
 # Validate that QUICKNODE_HOST is a hostname, not a full URL
 if [[ "$QUICKNODE_HOST" =~ ^https?:// ]]; then
     echo "Error: QUICKNODE_HOST should be a hostname only, not a full URL."
@@ -67,11 +76,12 @@ if [ -n "$DATA_DIRECTORY" ]; then
     ln -s "$DATA_DIRECTORY"/celestia-light /home/"$TARGET_USER"/.celestia-light
 fi
 
-# Setup celestia binary
+
+echo "Setup celestia binary"
 yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
 celestia version
 
-# Prepare Quicknode auth
+echo "Prepare Quicknode auth"
 mkdir -p /home/"$TARGET_USER"/.celestia-auth
 tee > /home/"$TARGET_USER"/.celestia-auth/xtoken.json << EOF
 {
@@ -82,6 +92,7 @@ chmod 600 /home/"$TARGET_USER"/.celestia-auth/xtoken.json
 chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-auth
 
 sudo -u $TARGET_USER bash -c 'celestia light init --p2p.network mocha'
+echo "Updating /celestia-light-mocha-4 permissions"
 chown -R "$TARGET_USER:$TARGET_USER" /home/"$TARGET_USER"/.celestia-light-mocha-4
 # Config
 # TODO: Re-enable this dynamic fetch. For now, we need to sync from a slightly stale height to ensure `Tail()` is less than the genesis height
