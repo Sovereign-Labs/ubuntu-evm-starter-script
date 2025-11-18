@@ -380,10 +380,61 @@ cd sov-observability
 # Configure telegraf with provided parameters
 if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring telegraf with provided parameters"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
-    sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" telegraf/telegraf.conf
-    sudo sed -i "s|{INFLUX_TOKEN}|$INFLUX_TOKEN|g" telegraf/telegraf.conf
-    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" telegraf/telegraf.conf
+    wget -q https://repos.influxdata.com/influxdata-archive_compat.key
+    echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c influxdata-archive_compat.key' | sha256sum -c && cat influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+    echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" telegraf
+    sudo -u $TARGET_USER git checkout main
+
+    # Validate and replace hostname
+    HOSTNAME_COUNT=$(grep -c "hostname = " telegraf/telegraf.conf || true)
+    if [ "$HOSTNAME_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'hostname = ' line in telegraf.conf, found $HOSTNAME_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|hostname = .*|hostname = \"$HOSTNAME\"|g" telegraf/telegraf.conf
+
+    # Replace hardcoded InfluxDB URL with monitoring URL
+    sudo sed -i "s|urls = \[\"http://influxdb:8086\"\]|urls = [\"http://$MONITORING_URL:8086\"]|g" telegraf/telegraf.conf
+
+    # Validate and replace token
+    TOKEN_COUNT=$(grep -c "token = " telegraf/telegraf.conf || true)
+    if [ "$TOKEN_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'token = ' line in telegraf.conf, found $TOKEN_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|token.*|token = \"$INFLUX_TOKEN\"|g" telegraf/telegraf.conf
+    sudo sed -i "s|organization.*|organization = \"Sovereign Labs\"|g" telegraf/telegraf.conf
+    sudo sed -i "s|bucket.*|bucket = \"sov-dev\"|g" telegraf/telegraf.conf
+
+    # Validate and set environment tag to sov-testnet
+    ENVIRONMENT_COUNT=$(grep -c "environment = " telegraf/telegraf.conf || true)
+    if [ "$ENVIRONMENT_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'environment = ' line in telegraf.conf, found $ENVIRONMENT_COUNT"
+        exit 1
+    fi
+    sudo sed -i 's|environment.*|environment = "sov-testnet"|g' telegraf/telegraf.conf
+
+    # Validate and set mount points for disk monitoring
+    MOUNT_POINTS_COUNT=$(grep -c "mount_points = " telegraf/telegraf.conf || true)
+    if [ "$MOUNT_POINTS_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'mount_points = ' line in telegraf.conf, found $MOUNT_POINTS_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|mount_points = .*|mount_points = [\"/\", \"$ROLLUP_STATE_DIR\"]|g" telegraf/telegraf.conf
+
+    # Validate and set directories for filecount monitoring
+    DIRECTORIES_COUNT=$(grep -c "directories = " telegraf/telegraf.conf || true)
+    if [ "$DIRECTORIES_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'directories = ' line in telegraf.conf, found $DIRECTORIES_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|directories = .*|directories = [\"$ROLLUP_STATE_DIR/**\", \"/mnt/logs/**\"]|g" telegraf/telegraf.conf
+
+    sudo cp telegraf/telegraf.conf /etc/telegraf/telegraf.conf
+    sudo systemctl start telegraf
+    sudo systemctl enable telegraf
 else
     echo "Warning: Telegraf parameters not fully provided, using defaults from config file"
 fi
@@ -391,15 +442,18 @@ fi
 # Configure Grafana Alloy with central config if password provided
 if [ -n "$ALLOY_PASSWORD" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring Grafana Alloy with central config"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
-    sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
-    sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
-    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" grafana-alloy/config.central.alloy
+    ALLOY_CONFIG="config.central-template.alloy"
+    sudo sed -i "s|config.local.alloy|$ALLOY_CONFIG|g" docker-compose.yml
+    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{ALLOY_USER}|sov-logger|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{TEMPO_HOST}|tempo.sov-obs.xyz:443|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{LOKI_HOST}|loki.sov-obs.xyz|g" "grafana-alloy/$ALLOY_CONFIG"
 else
     echo "Alloy password not provided (or missing monitoring hostname), using local config"
 fi
 
-sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
+sudo -u $TARGET_USER sg docker -c 'make start-alloy-only'
 
 
 echo "Creating systemd service for rollup"
