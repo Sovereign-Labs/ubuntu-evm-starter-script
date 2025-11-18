@@ -357,10 +357,26 @@ cd sov-observability
 # Configure telegraf with provided parameters
 if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring telegraf with provided parameters"
+    wget -q https://repos.influxdata.com/influxdata-archive_compat.key
+    echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c influxdata-archive_compat.key' | sha256sum -c && cat influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+    echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
     sudo -u $TARGET_USER git checkout preston/cfn-template
     sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" telegraf/telegraf.conf
     sudo sed -i "s|{INFLUX_TOKEN}|$INFLUX_TOKEN|g" telegraf/telegraf.conf
     sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" telegraf/telegraf.conf
+
+    # Set environment tag to sov-testnet
+    sudo sed -i 's|environment = "sov-dev"|environment = "sov-testnet"|g' telegraf/telegraf.conf
+
+    # Set mount points for disk monitoring
+    sudo sed -i "s|mount_points = \\[\"/\", \"/mnt/rollup\"\\]|mount_points = [\"/\", \"$ROLLUP_STATE_DIR\"]|g" telegraf/telegraf.conf
+
+    # Set directories for filecount monitoring
+    sudo sed -i "s|directories = \\[ \"/mnt\", \"/mnt/rollup/\\*\\*\" \\]|directories = [\"$ROLLUP_STATE_DIR/**\", \"/mnt/logs/**\"]|g" telegraf/telegraf.conf
+
+    sudo cp telegraf/telegraf.conf /etc/telegraf/telegraf.conf
+    sudo systemctl start telegraf
+    sudo systemctl enable telegraf
 else
     echo "Warning: Telegraf parameters not fully provided, using defaults from config file"
 fi
@@ -376,7 +392,7 @@ else
     echo "Alloy password not provided (or missing monitoring hostname), using local config"
 fi
 
-sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
+sudo -u $TARGET_USER sg docker -c 'make start-alloy-only'
 
 
 echo "Creating systemd service for rollup"
