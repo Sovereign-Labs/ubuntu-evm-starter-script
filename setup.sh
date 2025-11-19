@@ -24,6 +24,8 @@ POSTGRES_CONN_STRING=""
 QUICKNODE_API_TOKEN=""
 QUICKNODE_HOST=""
 CELESTIA_KEY_SEED=""
+CELESTIA_GENESIS_DA_HEIGHT=""
+CELESTIA_BATCH_NAMESPACE=""
 MONITORING_URL=""
 INFLUX_TOKEN=""
 HOSTNAME=""
@@ -74,23 +76,33 @@ while [[ $# -gt 0 ]]; do
             MOCK_DA_CONNECTION_STRING="$2"
             shift 2
             ;;
+        --celestia-genesis-da-height)
+            CELESTIA_GENESIS_DA_HEIGHT="$2"
+            shift 2
+            ;;
+        --celestia-batch-namespace)
+            CELESTIA_BATCH_NAMESPACE="$2"
+            shift 2
+            ;;
         --is-primary)
             IS_PRIMARY=true
             shift
             ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
-            echo "  --postgres-conn-string <string>      : Postgres connection string (optional)"
-            echo "  --quicknode-token <string>           : Quicknode API token (optional)"
-            echo "  --quicknode-host <string>            : Quicknode hostname (optional)"
-            echo "  --celestia-seed <string>             : Celestia key seed phrase (optional)"
-            echo "  --monitoring-url <string>            : Monitoring instance URL for metrics (optional, do not include http://)"
-            echo "  --influx-token <string>              : InfluxDB authentication token (optional)"
-            echo "  --hostname <string>                  : Hostname of this box for metrics reporting (optional)"
-            echo "  --alloy-password <string>            : Grafana Alloy password for central config (optional)"
-            echo "  --branch-name <string>               : Branch name to checkout (optional)"
-            echo "  --mock-da-connection-string <string> : Postgres connection string for mock DA (optional)"
-            echo "  --is-primary                         : Set this node as primary (optional, default: replica)"
+            echo "  --postgres-conn-string <string>       : Postgres connection string (optional)"
+            echo "  --quicknode-token <string>            : Quicknode API token (optional)"
+            echo "  --quicknode-host <string>             : Quicknode hostname (optional)"
+            echo "  --celestia-seed <string>              : Celestia key seed phrase (optional)"
+            echo "  --monitoring-url <string>             : Monitoring instance URL for metrics (optional, do not include http://)"
+            echo "  --influx-token <string>               : InfluxDB authentication token (optional)"
+            echo "  --hostname <string>                   : Hostname of this box for metrics reporting (optional)"
+            echo "  --alloy-password <string>             : Grafana Alloy password for central config (optional)"
+            echo "  --branch-name <string>                : Branch name to checkout (optional)"
+            echo "  --mock-da-connection-string <string>  : Postgres connection string for mock DA (optional)"
+            echo "  --celestia-genesis-da-height <string> : Celestia height"
+            echo "  --celestia-batch-namespace <string>   : Batch namespace name"
+            echo "  --is-primary                          : Set this node as primary (optional, default: replica)"
             exit 0
             ;;
         *)
@@ -270,6 +282,37 @@ else
     echo "Configuring node as replica (is_replica=true)"
 fi
 
+# ---------- Install Celestia -----------
+if [ "$SETUP_CELESTIA" = false ]; then
+	echo "Celestia parameters not provided, skipping Celestia setup"
+else
+  echo "Setting up celestia"
+	# TODO: determine genesis and config file paths.
+	# This probably work, but needs to be double checked
+    ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
+    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
+    ROLLUP_CONST_FILE="/home/$TARGET_USER/rollup-starter/constants.toml"
+    CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
+    mkdir -p "$CELESTIA_DATA_DIR"
+
+	# Run the Celestia setup script (use absolute path)
+	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
+
+    echo "TARGET_USER: $TARGET_USER"
+    echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
+    echo "QUICKNODE_HOST: $QUICKNODE_HOST"
+    echo "CELESTIA_KEY_SEED: $CELESTIA_KEY_SEED"
+    echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
+    echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
+    echo "ROLLUP_CONST_FILE: $ROLLUP_CONST_FILE"
+    echo "CELESTIA_DATA_DIR: $CELESTIA_DATA_DIR"
+    echo "CELESTIA_GENESIS_DA_HEIGHT: $CELESTIA_GENESIS_DA_HEIGHT"
+    echo "CELESTIA_BATCH_NAMESPACE: $CELESTIA_BATCH_NAMESPACE"
+    
+    echo "START CELESTIA_SCRIPT"
+	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\" \"$CELESTIA_GENESIS_DA_HEIGHT\" \"$CELESTIA_BATCH_NAMESPACE\" \"$ROLLUP_CONST_FILE\""
+fi
+
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
 echo "Building rollup as $TARGET_USER"
@@ -328,24 +371,6 @@ MaxRetentionSec=30day
 EOF
 sudo systemctl restart systemd-journald
 echo "Journald configured."
-
-
-# ---------- Install Celestia -----------
-if [ "$SETUP_CELESTIA" = false ]; then
-	echo "Celestia parameters not provided, skipping Celestia setup"
-else
-  echo "Setting up celestia"
-	# TODO: determine genesis and config file paths.
-	# This probably work, but needs to be double checked
-    ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
-    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
-    CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
-    mkdir -p "$CELESTIA_DATA_DIR"
-
-	# Run the Celestia setup script (use absolute path)
-	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
-	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\""
-fi
 
 
 # Setup the observability stack as target user
