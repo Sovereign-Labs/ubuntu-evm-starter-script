@@ -203,7 +203,7 @@ NVME_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
         if [[ "$name" == nvme* ]]; then
             SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
             # Include only instance storage (exclude EBS volumes with vol-* serial)
-            if [[ "$SERIAL" != vol-* ]]; then
+            if [[ "$SERIAL" != vol* ]]; then
                 echo "$size $name"
             fi
         fi
@@ -504,11 +504,12 @@ echo "Setting up observability stack as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
+sudo -u $TARGET_USER git checkout theodore/hack-compose-on-aws
 
 # Configure telegraf with provided parameters
 if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring telegraf with provided parameters"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
+    sudo -u $TARGET_USER git checkout theodore/hack-compose-on-aws
     sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" telegraf/telegraf.conf
     sudo sed -i "s|{INFLUX_TOKEN}|$INFLUX_TOKEN|g" telegraf/telegraf.conf
     sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" telegraf/telegraf.conf
@@ -519,7 +520,7 @@ fi
 # Configure Grafana Alloy with central config if password provided
 if [ -n "$ALLOY_PASSWORD" ] && [ -n "$HOSTNAME" ]; then
     echo "Configuring Grafana Alloy with central config"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
+    sudo -u $TARGET_USER git checkout theodore/hack-compose-on-aws
     sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
     sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
     sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" grafana-alloy/config.central.alloy
