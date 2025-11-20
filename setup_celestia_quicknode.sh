@@ -51,7 +51,6 @@ ROLLUP_KEY_NAME="rollup-key"
 
 echo "TARGET_USER: $TARGET_USER"
 echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
-echo "CELESTIA_KEY_SEED: $CELESTIA_KEY_SEED"
 echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
 echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
 echo "DATA_DIRECTORY: $DATA_DIRECTORY"
@@ -172,9 +171,6 @@ CELESTIA_PRIVKEY_HEX=$(
   | grep -v '^cel-key export' \
   | tr -d '\r\n '
 )
-
-echo "---------------------"
-echo "CELESTIA_PRIVKEY_HEX: ${CELESTIA_PRIVKEY_HEX}"
   
 
 # Update genesis file if provided

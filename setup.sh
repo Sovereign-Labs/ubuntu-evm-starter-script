@@ -127,7 +127,7 @@ if [ -n "$QUICKNODE_API_TOKEN" ] && [ -n "$QUICKNODE_HOST" ] && [ -n "$CELESTIA_
     echo "Celestia parameters provided. Setting up celestia token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
     SETUP_CELESTIA=true
 else
-    echo "Celestia parameters not fully provided, skipping Celestia setup. token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
+    echo "Celestia parameters not fully provided, skipping Celestia setup. host: ${QUICKNODE_HOST}"
 fi
 
 # Set file descriptor limit
@@ -299,9 +299,7 @@ else
 	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
 
     echo "TARGET_USER: $TARGET_USER"
-    echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
     echo "QUICKNODE_HOST: $QUICKNODE_HOST"
-    echo "CELESTIA_KEY_SEED: $CELESTIA_KEY_SEED"
     echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
     echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
     echo "ROLLUP_CONST_FILE: $ROLLUP_CONST_FILE"
