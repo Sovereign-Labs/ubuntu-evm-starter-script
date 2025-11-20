@@ -28,7 +28,7 @@ MONITORING_URL=""
 INFLUX_TOKEN=""
 HOSTNAME=""
 ALLOY_PASSWORD=""
-BRANCH_NAME="preston/update-to-nightly"
+BRANCH_NAME="theodore/update"
 MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
 
@@ -139,6 +139,7 @@ echo "Cloning rollup-starter as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
+echo "Checking out branch $BRANCH_NAME"
 sudo -u $TARGET_USER git switch $BRANCH_NAME
 
 # Detect EBS volumes and NVMe instance storage separately
@@ -153,7 +154,7 @@ EBS_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
     while read size name; do
         if [[ "$name" == nvme* ]]; then
             SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
-            if [[ "$SERIAL" == vol-* ]]; then
+            if [[ "$SERIAL" == vol* ]]; then
                 echo "$size $name"
             fi
         fi
