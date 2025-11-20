@@ -39,23 +39,38 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --quicknode-token)
-            QUICKNODE_API_TOKEN="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                QUICKNODE_API_TOKEN="$2"
+            fi
             shift 2
             ;;
         --quicknode-host)
-            QUICKNODE_HOST="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                QUICKNODE_HOST="$2"
+            fi
             shift 2
             ;;
         --celestia-seed)
-            CELESTIA_KEY_SEED="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                CELESTIA_KEY_SEED="$2"
+            fi
             shift 2
             ;;
         --monitoring-url)
-            MONITORING_URL="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                MONITORING_URL="$2"
+            fi
             shift 2
             ;;
         --influx-token)
-            INFLUX_TOKEN="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                INFLUX_TOKEN="$2"
+            fi
             shift 2
             ;;
         --hostname)
@@ -63,15 +78,24 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --alloy-password)
-            ALLOY_PASSWORD="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                ALLOY_PASSWORD="$2"
+            fi
             shift 2
             ;;
         --branch-name)
-            BRANCH_NAME="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                BRANCH_NAME="$2"
+            fi
             shift 2
             ;;
         --mock-da-connection-string)
-            MOCK_DA_CONNECTION_STRING="$2"
+            # Only set if non-empty (but allow IP addresses)
+            if [ -n "$2" ]; then
+                MOCK_DA_CONNECTION_STRING="$2"
+            fi
             shift 2
             ;;
         --is-primary)
