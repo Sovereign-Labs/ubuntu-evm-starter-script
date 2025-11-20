@@ -127,7 +127,7 @@ EOF
 
 # Install system dependencies
 sudo apt update
-sudo apt install -y clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose jq
+sudo apt install -y clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose jq nvme-cli pv bcache-tools
 
 # Install Rust as the target user
 echo "Installing Rust as $TARGET_USER"
@@ -141,28 +141,70 @@ sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.
 cd rollup-starter
 sudo -u $TARGET_USER git switch $BRANCH_NAME
 
-# Find the largest and second largest unmounted block devices
-# This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
-UNMOUNTED_DEVICES=$(lsblk -ndo NAME,SIZE,MOUNTPOINT,TYPE | \
-    awk 'NF==3 && $3=="disk" {print $2,$1}' | \
-    sort -hr)
+# Detect EBS volumes and NVMe instance storage separately
+# EBS volumes have serial numbers starting with "vol-"
+# NVMe instance storage has serial numbers like "AWS[instance-id][disk-number]"
 
-LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n1 | awk '{print $2}')
-SECOND_LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n2 | tail -n1 | awk '{print $2}')
+echo "Detecting storage devices..."
 
-if [ -z "$LARGEST_UNMOUNTED" ]; then
-    echo "Error: No unmounted block devices found. Cannot set up rollup-state storage."
+# Find all EBS volumes (sorted by size, largest first)
+EBS_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
+    awk '$3=="disk" {print $2,$1}' | \
+    while read size name; do
+        if [[ "$name" == nvme* ]]; then
+            SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
+            if [[ "$SERIAL" == vol-* ]]; then
+                echo "$size $name"
+            fi
+        fi
+    done | sort -hr)
+
+# Get largest EBS volume (this will be our backing store, not the small root volume)
+LARGEST_EBS=$(echo "$EBS_DEVICES" | head -n1 | awk '{print $2}')
+
+if [ -n "$LARGEST_EBS" ]; then
+    EBS_DEVICE="/dev/$LARGEST_EBS"
+    EBS_SIZE=$(echo "$EBS_DEVICES" | head -n1 | awk '{print $1}')
+    echo "Found EBS backing volume: $EBS_DEVICE (size: $(numfmt --to=iec-i --suffix=B $EBS_SIZE))"
+else
+    EBS_DEVICE=""
+    echo "Warning: No EBS backing volume found."
+fi
+
+# Find NVMe instance storage devices (exclude all EBS volumes)
+NVME_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
+    awk '$3=="disk" {print $2,$1}' | \
+    while read size name; do
+        if [[ "$name" == nvme* ]]; then
+            SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
+            # Include only instance storage (exclude EBS volumes with vol-* serial)
+            if [[ "$SERIAL" != vol-* ]]; then
+                echo "$size $name"
+            fi
+        fi
+    done | sort -hr)
+
+LARGEST_NVME=$(echo "$NVME_DEVICES" | head -n1 | awk '{print $2}')
+SECOND_LARGEST_NVME=$(echo "$NVME_DEVICES" | head -n2 | tail -n1 | awk '{print $2}')
+
+if [ -z "$LARGEST_NVME" ]; then
+    echo "Error: No NVMe instance storage found. Cannot set up rollup-state storage."
     exit 1
 fi
-if [ -z "$SECOND_LARGEST_UNMOUNTED" ]; then
-    echo "Error: No second unmounted block device found. Logs will be stored on the root volume."
+
+if [ -z "$SECOND_LARGEST_NVME" ]; then
+    echo "Error: No second NVMe instance storage found for logs storage."
     exit 1
 fi
 
-DEVICE="/dev/$LARGEST_UNMOUNTED"
-echo "Using $DEVICE (largest unmounted block device) for rollup-state storage"
-LOGS_DEVICE="/dev/$SECOND_LARGEST_UNMOUNTED"
-echo "Using $LOGS_DEVICE (second largest unmounted block device) for logs storage"
+# Primary data storage will use dm-writecache with NVMe as fast cache and EBS as backing store
+CACHE_DEVICE="/dev/$LARGEST_NVME"
+LOGS_DEVICE="/dev/$SECOND_LARGEST_NVME"
+echo "Using $CACHE_DEVICE (NVMe instance storage) for fast cache layer"
+echo "Using $LOGS_DEVICE (NVMe instance storage) for logs storage"
+
+# This will be the device we mount at rollup-state (either dm-writecache or plain NVMe)
+DEVICE="$CACHE_DEVICE"
 
 # Mount the logs device and move all syslogging to it.
 sudo mkdir -p /mnt/logs && sudo mkfs.ext4 -F "$LOGS_DEVICE" && sudo mount "$LOGS_DEVICE" /mnt/logs
@@ -202,13 +244,97 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
     rm -rf "$ROLLUP_STATE_DIR"
 fi
 
-sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
-# Get UUID of the rollup-state device for stable fstab entry
-ROLLUP_STATE_UUID=$(sudo blkid -s UUID -o value "$DEVICE")
-# Add the new directory to /etc/fstab if not already present
-if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
-    echo "UUID=$ROLLUP_STATE_UUID $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+# Set up storage with bcache if EBS backing store is available
+if [ -n "$EBS_DEVICE" ]; then
+    echo "Setting up bcache with NVMe cache and EBS backing store..."
+
+    # Safety check: ensure EBS is empty (fresh install only)
+    if sudo blkid "$EBS_DEVICE" | grep -q "TYPE="; then
+        echo "Error: EBS volume $EBS_DEVICE already has a filesystem or superblock!"
+        echo "This setup script is for fresh installations only."
+        echo "To restore from an existing volume, use restore-from-volume.sh instead."
+        sudo blkid "$EBS_DEVICE"
+        exit 1
+    fi
+
+    echo "EBS volume is empty - proceeding with fresh bcache setup"
+
+    # Create bcache backing device (EBS - 940GB)
+    echo "Creating bcache backing device on $EBS_DEVICE..."
+    sudo make-bcache -B "$EBS_DEVICE" --wipe-bcache
+
+    # Create bcache cache device (NVMe - 950GB)
+    echo "Creating bcache cache device on $CACHE_DEVICE..."
+    sudo make-bcache -C "$CACHE_DEVICE" --wipe-bcache
+
+    # Wait for bcache devices to appear
+    echo "Waiting for bcache devices to initialize..."
+    sleep 3
+
+    # Find the bcache backing device (should be /dev/bcache0)
+    BCACHE_DEV=$(ls /dev/bcache* 2>/dev/null | head -n1)
+    if [ -z "$BCACHE_DEV" ]; then
+        echo "Error: bcache device not found after creation"
+        exit 1
+    fi
+    echo "bcache backing device created: $BCACHE_DEV"
+
+    # Attach cache to backing device
+    CACHE_SET_UUID=$(sudo bcache-super-show "$CACHE_DEVICE" | grep "cset.uuid" | awk '{print $2}')
+    if [ -z "$CACHE_SET_UUID" ]; then
+        echo "Error: Could not get cache set UUID"
+        exit 1
+    fi
+    echo "Attaching cache (UUID: $CACHE_SET_UUID) to backing device..."
+    echo "$CACHE_SET_UUID" | sudo tee /sys/block/$(basename $BCACHE_DEV)/bcache/attach
+
+    # Wait for attachment
+    sleep 2
+
+    # Configure bcache for optimal performance and safety
+    echo "Configuring bcache settings..."
+    BCACHE_SYSFS="/sys/block/$(basename $BCACHE_DEV)/bcache"
+
+    # Set writeback mode (writes go to cache, async writeback to backing)
+    echo writeback | sudo tee $BCACHE_SYSFS/cache_mode
+
+    # Disable sequential cutoff (prevent bypass of cache for large sequential reads)
+    echo 0 | sudo tee $BCACHE_SYSFS/sequential_cutoff
+
+    echo 10 | sudo tee $BCACHE_SYSFS/writeback_percent     # Trigger writeback at 10% dirty
+    echo 30 | sudo tee $BCACHE_SYSFS/writeback_delay       # 30 second delay before writeback
+    echo 8000 | sudo tee $BCACHE_SYSFS/writeback_rate_minimum  # Minimum writeback rate (KB/s)
+
+    echo "bcache configured: writeback mode, no sequential bypass, 10% dirty threshold, 8MB/s min writeback"
+
+    # Create ext4 filesystem on bcache device
+    echo "Creating ext4 filesystem on bcache device..."
+    sudo mkfs.ext4 -F "$BCACHE_DEV"
+
+    # Mount bcache device
+    DEVICE="$BCACHE_DEV"
+    sudo mkdir -p "$ROLLUP_STATE_DIR"
+    sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
+
+    # Add to fstab using bcache device path
+    if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
+        echo "$BCACHE_DEV $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+    fi
+
+    echo "bcache setup complete - all I/O goes through NVMe with async writeback to EBS"
+else
+    # No EBS backing store - use NVMe directly (legacy behavior)
+    echo "No EBS backing store found - using NVMe directly without replication"
+    sudo mkfs.ext4 -F "$DEVICE"
+    sudo mkdir -p "$ROLLUP_STATE_DIR"
+    sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
+
+    ROLLUP_STATE_UUID=$(sudo blkid -s UUID -o value "$DEVICE")
+    if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
+        echo "UUID=$ROLLUP_STATE_UUID $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+    fi
 fi
+
 sudo systemctl daemon-reload
 sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
 
