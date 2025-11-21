@@ -51,7 +51,6 @@ ROLLUP_KEY_NAME="rollup-key"
 
 echo "TARGET_USER: $TARGET_USER"
 echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
-echo "CELESTIA_KEY_SEED: $CELESTIA_KEY_SEED"
 echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
 echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
 echo "DATA_DIRECTORY: $DATA_DIRECTORY"
@@ -83,8 +82,9 @@ if [ -n "$DATA_DIRECTORY" ]; then
 fi
 
 
-echo "Setup celestia binary"
+echo "===Setup celestia binary"
 yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
+echo "Finisched setup celestia binary"
 celestia version
 
 echo "Prepare Quicknode auth"
@@ -143,6 +143,7 @@ echo "$CELESTIA_KEY_SEED" | docker run \
   ghcr.io/celestiaorg/celestia-node:v0.28.2-arabica \
   cel-key --keyring-dir /mnt/keyring add $ROLLUP_KEY_NAME --recover
 
+chown -R "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.celestia-light-mocha-4/keys"
 CELESTIA_ADDRESS=$(docker run \
   -v /home/"$TARGET_USER"/.celestia-light-mocha-4/keys:/mnt/keyring \
   -v /home/"$TARGET_USER"/.celestia-app:/.celestia-app \
@@ -156,25 +157,26 @@ CELESTIA_ADDRESS=$(docker run \
 echo "-----------------"
 echo "Imported address for sequencer: ${CELESTIA_ADDRESS}"
 
+chown -R "$TARGET_USER:$TARGET_USER" "/home/$TARGET_USER/.celestia-light-mocha-4/keys"
 
-CELESTIA_PRIVKEY_HEX=$(
-  yes y | docker run \
+CELESTIA_PRIVKEY_HEX=$(yes y | docker run \
     -v /home/ubuntu/.celestia-light-mocha-4/keys:/mnt/keyring \
+    -v /home/"$TARGET_USER"/.celestia-app:/.celestia-app \
     -i \
     --user $(id -u):$(id -g) \
     ghcr.io/celestiaorg/celestia-node:v0.28.2-arabica \
-      cel-key export "rollup-key" \
-      --keyring-dir /mnt/keyring \
-      --unsafe \
-      --unarmored-hex \
-      2>&1 \
-  | grep -v '^Starting Celestia' \
-  | grep -v '^cel-key export' \
-  | tr -d '\r\n '
+        cel-key export "rollup-key" \
+        --keyring-dir /mnt/keyring \
+        --unsafe \
+        --unarmored-hex \
+        2>&1 \
+    | grep -v "^Starting Celestia" \
+    | grep -v "^cel-key export" \
+    | tr -d "\r\n "
 )
 
-echo "---------------------"
-echo "CELESTIA_PRIVKEY_HEX: ${CELESTIA_PRIVKEY_HEX}"
+
+echo "Imported CELESTIA_PRIVKEY_HEX: ${CELESTIA_PRIVKEY_HEX}"
   
 
 # Update genesis file if provided
@@ -196,11 +198,15 @@ fi
 
 # Update rollup config file if provided
 if [ -n "$ROLLUP_CONFIG_FILE" ]; then
-    echo "Updating rollup.toml"
+    echo "Updating $ROLLUP_CONFIG_FILE"
+    echo "Updating rpc_url $QUICKNODE_HOST $QUICKNODE_API_TOKEN"
     sed -i "s|rpc_url = \".*\"|rpc_url = \"wss://${QUICKNODE_HOST}/${QUICKNODE_API_TOKEN}\"|g" "${ROLLUP_CONFIG_FILE}"
+    echo "Updating grpc_url $QUICKNODE_HOST"
     sed -i "s|grpc_url = \".*\"|grpc_url = \"https://${QUICKNODE_HOST}:9090\"|g" "${ROLLUP_CONFIG_FILE}"
+    echo "Updating grpc_auth_token $QUICKNODE_API_TOKEN"
     sed -i "s|grpc_auth_token = \".*\"|grpc_auth_token = \"${QUICKNODE_API_TOKEN}\"|g" "${ROLLUP_CONFIG_FILE}"
-    sed -i "s|signer_private_key = \".*\"|signer_private_key = \"${CELESTIA_PRIVKEY_HEX}\"|g" "${ROLLUP_CONFIG_FILE}"
+    echo "Updating signer_private_key $CELESTIA_PRIVKEY_HEX"
+    sed -i "s|signer_private_key.*|signer_private_key = \"${CELESTIA_PRIVKEY_HEX}\"|g" "${ROLLUP_CONFIG_FILE}"
 else
     echo "No config file provided, skipping config update"
 fi
