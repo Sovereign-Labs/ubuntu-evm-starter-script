@@ -353,6 +353,7 @@ echo "Setting up observability stack as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability
+sudo -u $TARGET_USER git checkout theodore/hack-compose-on-aws
 
 # Configure telegraf with provided parameters
 if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
