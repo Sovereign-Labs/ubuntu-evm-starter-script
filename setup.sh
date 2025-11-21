@@ -117,7 +117,6 @@ done
 
 echo "OBS PARAMETERS:"
 echo "MONITORING_URL $MONITORING_URL"
-echo "INFLUX_TOKEN $INFLUX_TOKEN"
 echo "HOSTNAME $HOSTNAME"
 echo "POSTGRES_CONN_STRING $POSTGRES_CONN_STRING"
 echo "IS_PRIMARY $IS_PRIMARY"
@@ -322,7 +321,7 @@ fi
 
 
 # Setup the observability stack as target user
-echo "=== Setting up observability stack as $TARGET_USER"
+echo "Setting up observability stack as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
 cd sov-observability

@@ -50,7 +50,6 @@ ROLLUP_KEY_NAME="rollup-key"
 
 
 echo "TARGET_USER: $TARGET_USER"
-echo "QUICKNODE_API_TOKEN: $QUICKNODE_API_TOKEN"
 echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
 echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
 echo "DATA_DIRECTORY: $DATA_DIRECTORY"
@@ -82,9 +81,8 @@ if [ -n "$DATA_DIRECTORY" ]; then
 fi
 
 
-echo "===Setup celestia binary"
+echo "Setup celestia binary"
 yes "1" | bash -c "$(curl -sL https://raw.githubusercontent.com/celestiaorg/docs/main/public/celestia-node.sh)" -- -v v0.27.5-mocha
-echo "Finisched setup celestia binary"
 celestia version
 
 echo "Prepare Quicknode auth"
@@ -174,11 +172,7 @@ CELESTIA_PRIVKEY_HEX=$(yes y | docker run \
     | grep -v "^cel-key export" \
     | tr -d "\r\n "
 )
-
-
-echo "Imported CELESTIA_PRIVKEY_HEX: ${CELESTIA_PRIVKEY_HEX}"
   
-
 # Update genesis file if provided
 if [ -n "$BATCH_NAMESPACE" ]; then
   echo "Updating ${ROLLUP_CONST_FILE}"
@@ -199,13 +193,9 @@ fi
 # Update rollup config file if provided
 if [ -n "$ROLLUP_CONFIG_FILE" ]; then
     echo "Updating $ROLLUP_CONFIG_FILE"
-    echo "Updating rpc_url $QUICKNODE_HOST $QUICKNODE_API_TOKEN"
     sed -i "s|rpc_url = \".*\"|rpc_url = \"wss://${QUICKNODE_HOST}/${QUICKNODE_API_TOKEN}\"|g" "${ROLLUP_CONFIG_FILE}"
-    echo "Updating grpc_url $QUICKNODE_HOST"
     sed -i "s|grpc_url = \".*\"|grpc_url = \"https://${QUICKNODE_HOST}:9090\"|g" "${ROLLUP_CONFIG_FILE}"
-    echo "Updating grpc_auth_token $QUICKNODE_API_TOKEN"
     sed -i "s|grpc_auth_token = \".*\"|grpc_auth_token = \"${QUICKNODE_API_TOKEN}\"|g" "${ROLLUP_CONFIG_FILE}"
-    echo "Updating signer_private_key $CELESTIA_PRIVKEY_HEX"
     sed -i "s|signer_private_key.*|signer_private_key = \"${CELESTIA_PRIVKEY_HEX}\"|g" "${ROLLUP_CONFIG_FILE}"
 else
     echo "No config file provided, skipping config update"
