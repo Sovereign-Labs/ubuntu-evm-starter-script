@@ -285,9 +285,10 @@ fi
 # Update is_replica setting based on --is-primary flag
 if [ "$IS_PRIMARY" = true ]; then
     echo "Configuring node as primary (is_replica=false)"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica = true|is_replica = false|g" {} \;
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = false|g" {} \;
 else
     echo "Configuring node as replica (is_replica=true)"
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = true|g" {} \;
 fi
 
 # ---------- Install Celestia -----------
@@ -382,14 +383,6 @@ if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; the
         exit 1
     fi
     sudo sed -i 's|environment.*|environment = "sov-testnet"|g' telegraf/telegraf.conf
-
-    # Validate and set mount points for disk monitoring
-    MOUNT_POINTS_COUNT=$(grep -c "mount_points = " telegraf/telegraf.conf || true)
-    if [ "$MOUNT_POINTS_COUNT" -ne 1 ]; then
-        echo "Error: Expected exactly 1 'mount_points = ' line in telegraf.conf, found $MOUNT_POINTS_COUNT"
-        exit 1
-    fi
-    sudo sed -i "s|mount_points = .*|mount_points = [\"/\", \"$ROLLUP_STATE_DIR\"]|g" telegraf/telegraf.conf
 
     # Validate and set directories for filecount monitoring
     DIRECTORIES_COUNT=$(grep -c "directories = " telegraf/telegraf.conf || true)
