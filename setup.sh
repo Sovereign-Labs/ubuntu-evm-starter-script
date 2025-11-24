@@ -383,14 +383,6 @@ if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; the
     fi
     sudo sed -i 's|environment.*|environment = "sov-testnet"|g' telegraf/telegraf.conf
 
-    # Validate and set mount points for disk monitoring
-    MOUNT_POINTS_COUNT=$(grep -c "mount_points = " telegraf/telegraf.conf || true)
-    if [ "$MOUNT_POINTS_COUNT" -ne 1 ]; then
-        echo "Error: Expected exactly 1 'mount_points = ' line in telegraf.conf, found $MOUNT_POINTS_COUNT"
-        exit 1
-    fi
-    sudo sed -i "s|mount_points = .*|mount_points = [\"/\", \"$ROLLUP_STATE_DIR\"]|g" telegraf/telegraf.conf
-
     # Validate and set directories for filecount monitoring
     DIRECTORIES_COUNT=$(grep -c "directories = " telegraf/telegraf.conf || true)
     if [ "$DIRECTORIES_COUNT" -ne 1 ]; then
