@@ -285,9 +285,10 @@ fi
 # Update is_replica setting based on --is-primary flag
 if [ "$IS_PRIMARY" = true ]; then
     echo "Configuring node as primary (is_replica=false)"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica = true|is_replica = false|g" {} \;
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = false|g" {} \;
 else
     echo "Configuring node as replica (is_replica=true)"
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = true|g" {} \;
 fi
 
 # ---------- Install Celestia -----------
