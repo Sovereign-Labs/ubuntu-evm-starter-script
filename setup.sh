@@ -475,7 +475,7 @@ User=$TARGET_USER
 WorkingDirectory=/home/$TARGET_USER/rollup-starter
 Environment="OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317"
 Environment="SOV_ENVIRONMENT_NAME=$HOSTNAME"
-ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup -- --rollup-config-path $ROLLUP_CONFIG_FILE
+ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup --rollup-config-path $ROLLUP_CONFIG_FILE
 Restart=always
 RestartSec=10
 StandardOutput=journal
