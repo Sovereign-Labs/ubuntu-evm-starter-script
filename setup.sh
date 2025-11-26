@@ -33,6 +33,7 @@ ALLOY_PASSWORD=""
 BRANCH_NAME="main"
 MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
+EVM_PINNED_ADDRESSES=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -88,6 +89,10 @@ while [[ $# -gt 0 ]]; do
             IS_PRIMARY=true
             shift
             ;;
+        --evm-pinned-addresses)
+            EVM_PINNED_ADDRESSES="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
             echo "  --postgres-conn-string <string>       : Postgres connection string (optional)"
@@ -103,6 +108,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --celestia-genesis-da-height <string> : Celestia height"
             echo "  --celestia-batch-namespace <string>   : Batch namespace name"
             echo "  --is-primary                          : Set this node as primary (optional, default: replica)"
+            echo "  --evm-pinned-addresses                : List of comma separated EVM address for RAM pinning. (optional) for example --evm-pinned-addresses 0x006e4eb63413050681079338404e07a1d72ab697,0xe7d2b7610d1574610cbd903ea896c59d17470633"
             exit 0
             ;;
         *)
@@ -291,6 +297,19 @@ else
     sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = true|g" {} \;
 fi
 
+# ---------- Setup EVM Pinned addresses -----
+ROLLUP_EXEC_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/evm_pinned_cache.json"
+
+echo "Setting up EVM pinned addresses: '$EVM_PINNED_ADDRESSES'"
+echo "Execution config path: $ROLLUP_EXEC_CONFIG_FILE"
+PINNED_ADDRESSES_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_evm_pinned_addresses.sh"
+"$PINNED_ADDRESSES_SCRIPT" "$ROLLUP_EXEC_CONFIG_FILE" "$EVM_PINNED_ADDRESSES" "$TARGET_USER"
+echo "Rollup execution config after setup:"
+cat $ROLLUP_EXEC_CONFIG_FILE
+echo "Set up of EVM pinned addresses is done"
+# ---------- END of setup EVM Pinned addresses -----
+
+
 # ---------- Install Celestia -----------
 if [ "$SETUP_CELESTIA" = false ]; then
 	echo "Celestia parameters not provided, skipping Celestia setup"
@@ -300,6 +319,7 @@ else
 	# This probably work, but needs to be double checked
     ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
     ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup_aws.toml"
+
     ROLLUP_CONST_FILE="/home/$TARGET_USER/rollup-starter/constants.toml"
     CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
     mkdir -p "$CELESTIA_DATA_DIR"
@@ -311,13 +331,14 @@ else
     echo "QUICKNODE_HOST: $QUICKNODE_HOST"
     echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
     echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
+
     echo "ROLLUP_CONST_FILE: $ROLLUP_CONST_FILE"
     echo "CELESTIA_DATA_DIR: $CELESTIA_DATA_DIR"
     echo "CELESTIA_GENESIS_DA_HEIGHT: $CELESTIA_GENESIS_DA_HEIGHT"
     echo "CELESTIA_BATCH_NAMESPACE: $CELESTIA_BATCH_NAMESPACE"
     
     echo "START CELESTIA_SCRIPT"
-	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\" \"$CELESTIA_GENESIS_DA_HEIGHT\" \"$CELESTIA_BATCH_NAMESPACE\" \"$ROLLUP_CONST_FILE\""
+	  sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\" \"$CELESTIA_GENESIS_DA_HEIGHT\" \"$CELESTIA_BATCH_NAMESPACE\" \"$ROLLUP_CONST_FILE\""
 fi
 
 
