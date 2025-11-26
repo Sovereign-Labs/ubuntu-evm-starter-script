@@ -30,7 +30,8 @@ MONITORING_URL=""
 INFLUX_TOKEN=""
 HOSTNAME=""
 ALLOY_PASSWORD=""
-BRANCH_NAME="preston/update-to-nightly"
+# Temp, revert this before merging
+BRANCH_NAME="main"
 MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
 EVM_PINNED_ADDRESSES="''"
