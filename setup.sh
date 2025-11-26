@@ -409,7 +409,7 @@ if [ "$SETUP_CELESTIA" = true ]; then
     echo "Building with celestia_da feature"
     sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --features celestia_da --features mock_zkvm --no-default-features'
 else
-    echo "Building without celestia_da feature"
+    echo "Building without mock_da feature"
     sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --no-default-features --features=mock_da_external,mock_zkvm'
 fi
 cd /home/$TARGET_USER
