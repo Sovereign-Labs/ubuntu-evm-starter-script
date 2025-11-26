@@ -24,6 +24,8 @@ POSTGRES_CONN_STRING=""
 QUICKNODE_API_TOKEN=""
 QUICKNODE_HOST=""
 CELESTIA_KEY_SEED=""
+CELESTIA_GENESIS_DA_HEIGHT=""
+CELESTIA_BATCH_NAMESPACE=""
 MONITORING_URL=""
 INFLUX_TOKEN=""
 HOSTNAME=""
@@ -74,23 +76,33 @@ while [[ $# -gt 0 ]]; do
             MOCK_DA_CONNECTION_STRING="$2"
             shift 2
             ;;
+        --celestia-genesis-da-height)
+            CELESTIA_GENESIS_DA_HEIGHT="$2"
+            shift 2
+            ;;
+        --celestia-batch-namespace)
+            CELESTIA_BATCH_NAMESPACE="$2"
+            shift 2
+            ;;
         --is-primary)
             IS_PRIMARY=true
             shift
             ;;
         -h|--help)
             echo "Usage: setup.sh [OPTIONS]"
-            echo "  --postgres-conn-string <string>      : Postgres connection string (optional)"
-            echo "  --quicknode-token <string>           : Quicknode API token (optional)"
-            echo "  --quicknode-host <string>            : Quicknode hostname (optional)"
-            echo "  --celestia-seed <string>             : Celestia key seed phrase (optional)"
-            echo "  --monitoring-url <string>            : Monitoring instance URL for metrics (optional, do not include http://)"
-            echo "  --influx-token <string>              : InfluxDB authentication token (optional)"
-            echo "  --hostname <string>                  : Hostname of this box for metrics reporting (optional)"
-            echo "  --alloy-password <string>            : Grafana Alloy password for central config (optional)"
-            echo "  --branch-name <string>               : Branch name to checkout (optional)"
-            echo "  --mock-da-connection-string <string> : Postgres connection string for mock DA (optional)"
-            echo "  --is-primary                         : Set this node as primary (optional, default: replica)"
+            echo "  --postgres-conn-string <string>       : Postgres connection string (optional)"
+            echo "  --quicknode-token <string>            : Quicknode API token (optional)"
+            echo "  --quicknode-host <string>             : Quicknode hostname (optional)"
+            echo "  --celestia-seed <string>              : Celestia key seed phrase (optional)"
+            echo "  --monitoring-url <string>             : Monitoring instance URL for metrics (optional, do not include http://)"
+            echo "  --influx-token <string>               : InfluxDB authentication token (optional)"
+            echo "  --hostname <string>                   : Hostname of this box for metrics reporting (optional)"
+            echo "  --alloy-password <string>             : Grafana Alloy password for central config (optional)"
+            echo "  --branch-name <string>                : Branch name to checkout (optional)"
+            echo "  --mock-da-connection-string <string>  : Postgres connection string for mock DA (optional)"
+            echo "  --celestia-genesis-da-height <string> : Celestia height"
+            echo "  --celestia-batch-namespace <string>   : Batch namespace name"
+            echo "  --is-primary                          : Set this node as primary (optional, default: replica)"
             exit 0
             ;;
         *)
@@ -100,6 +112,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+
+
+echo "OBS PARAMETERS:"
+echo "MONITORING_URL $MONITORING_URL"
+echo "HOSTNAME $HOSTNAME"
+echo "POSTGRES_CONN_STRING $POSTGRES_CONN_STRING"
+echo "IS_PRIMARY $IS_PRIMARY"
 
 # Determine the target user (ubuntu if running as root, otherwise current user)
 if [ "$EUID" -eq 0 ]; then
@@ -115,7 +135,7 @@ if [ -n "$QUICKNODE_API_TOKEN" ] && [ -n "$QUICKNODE_HOST" ] && [ -n "$CELESTIA_
     echo "Celestia parameters provided. Setting up celestia token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
     SETUP_CELESTIA=true
 else
-    echo "Celestia parameters not fully provided, skipping Celestia setup. token: ${QUICKNODE_API_TOKEN}, host: ${QUICKNODE_HOST}, seed: ${CELESTIA_KEY_SEED}"
+    echo "Celestia parameters not fully provided, skipping Celestia setup. host: ${QUICKNODE_HOST}"
 fi
 
 # Set file descriptor limit
@@ -265,10 +285,122 @@ fi
 # Update is_replica setting based on --is-primary flag
 if [ "$IS_PRIMARY" = true ]; then
     echo "Configuring node as primary (is_replica=false)"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica = true|is_replica = false|g" {} \;
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = false|g" {} \;
 else
     echo "Configuring node as replica (is_replica=true)"
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|is_replica.*|is_replica = true|g" {} \;
 fi
+
+# ---------- Install Celestia -----------
+if [ "$SETUP_CELESTIA" = false ]; then
+	echo "Celestia parameters not provided, skipping Celestia setup"
+else
+  echo "Setting up celestia"
+	# TODO: determine genesis and config file paths.
+	# This probably work, but needs to be double checked
+    ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
+    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
+    ROLLUP_CONST_FILE="/home/$TARGET_USER/rollup-starter/constants.toml"
+    CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
+    mkdir -p "$CELESTIA_DATA_DIR"
+
+	# Run the Celestia setup script (use absolute path)
+	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
+
+    echo "TARGET_USER: $TARGET_USER"
+    echo "QUICKNODE_HOST: $QUICKNODE_HOST"
+    echo "ROLLUP_GENESIS_FILE: $ROLLUP_GENESIS_FILE"
+    echo "ROLLUP_CONFIG_FILE: $ROLLUP_CONFIG_FILE"
+    echo "ROLLUP_CONST_FILE: $ROLLUP_CONST_FILE"
+    echo "CELESTIA_DATA_DIR: $CELESTIA_DATA_DIR"
+    echo "CELESTIA_GENESIS_DA_HEIGHT: $CELESTIA_GENESIS_DA_HEIGHT"
+    echo "CELESTIA_BATCH_NAMESPACE: $CELESTIA_BATCH_NAMESPACE"
+    
+    echo "START CELESTIA_SCRIPT"
+	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\" \"$CELESTIA_GENESIS_DA_HEIGHT\" \"$CELESTIA_BATCH_NAMESPACE\" \"$ROLLUP_CONST_FILE\""
+fi
+
+
+# Setup the observability stack as target user
+echo "Setting up observability stack as $TARGET_USER"
+cd /home/$TARGET_USER
+sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
+cd sov-observability
+
+
+# Configure Grafana Alloy with central config if password provided
+if [ -n "$ALLOY_PASSWORD" ] && [ -n "$HOSTNAME" ]; then
+    echo "Configuring Grafana Alloy with central config"
+    ALLOY_CONFIG="config.central-template.alloy"
+    sudo sed -i "s|config.local.alloy|$ALLOY_CONFIG|g" docker-compose.yml
+    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{ALLOY_USER}|sov-logger|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{TEMPO_HOST}|tempo.sov-obs.xyz:443|g" "grafana-alloy/$ALLOY_CONFIG"
+    sudo sed -i "s|{LOKI_HOST}|loki.sov-obs.xyz|g" "grafana-alloy/$ALLOY_CONFIG"
+else
+    echo "Alloy password not provided (or missing monitoring hostname), using local config"
+fi
+
+sudo -u $TARGET_USER sg docker -c 'make start-alloy-only'
+
+echo "Configure telegraf with provided parameters"
+
+if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
+    echo "Configuring telegraf with provided parameters"
+    wget -q https://repos.influxdata.com/influxdata-archive_compat.key
+    echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c influxdata-archive_compat.key' | sha256sum -c && cat influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
+    echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" telegraf
+    sudo -u $TARGET_USER git checkout main
+
+    # Validate and replace hostname
+    HOSTNAME_COUNT=$(grep -c "hostname = " telegraf/telegraf.conf || true)
+    if [ "$HOSTNAME_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'hostname = ' line in telegraf.conf, found $HOSTNAME_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|hostname = .*|hostname = \"$HOSTNAME\"|g" telegraf/telegraf.conf
+
+    # Replace hardcoded InfluxDB URL with monitoring URL
+    sudo sed -i "s|urls = \[\"http://influxdb:8086\"\]|urls = [\"http://$MONITORING_URL:8086\"]|g" telegraf/telegraf.conf
+
+    # Validate and replace token
+    TOKEN_COUNT=$(grep -c "token = " telegraf/telegraf.conf || true)
+    if [ "$TOKEN_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'token = ' line in telegraf.conf, found $TOKEN_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|token.*|token = \"$INFLUX_TOKEN\"|g" telegraf/telegraf.conf
+    sudo sed -i "s|organization.*|organization = \"Sovereign Labs\"|g" telegraf/telegraf.conf
+    sudo sed -i "s|bucket.*|bucket = \"sov-dev\"|g" telegraf/telegraf.conf
+
+    # Validate and set environment tag to sov-testnet
+    ENVIRONMENT_COUNT=$(grep -c "environment = " telegraf/telegraf.conf || true)
+    if [ "$ENVIRONMENT_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'environment = ' line in telegraf.conf, found $ENVIRONMENT_COUNT"
+        exit 1
+    fi
+    sudo sed -i 's|environment.*|environment = "sov-testnet"|g' telegraf/telegraf.conf
+
+    # Validate and set directories for filecount monitoring
+    DIRECTORIES_COUNT=$(grep -c "directories = " telegraf/telegraf.conf || true)
+    if [ "$DIRECTORIES_COUNT" -ne 1 ]; then
+        echo "Error: Expected exactly 1 'directories = ' line in telegraf.conf, found $DIRECTORIES_COUNT"
+        exit 1
+    fi
+    sudo sed -i "s|directories = .*|directories = [\"$ROLLUP_STATE_DIR/**\", \"/mnt/logs/**\"]|g" telegraf/telegraf.conf
+
+    sudo cp telegraf/telegraf.conf /etc/telegraf/telegraf.conf
+    sudo systemctl start telegraf
+    sudo systemctl enable telegraf
+else
+    echo "Warning: Telegraf parameters not fully provided, using defaults from config file"
+fi
+
+
+
 
 # Build the rollup as target user
 cd /home/$TARGET_USER/rollup-starter
@@ -329,54 +461,6 @@ EOF
 sudo systemctl restart systemd-journald
 echo "Journald configured."
 
-
-# ---------- Install Celestia -----------
-if [ "$SETUP_CELESTIA" = false ]; then
-	echo "Celestia parameters not provided, skipping Celestia setup"
-else
-  echo "Setting up celestia"
-	# TODO: determine genesis and config file paths.
-	# This probably work, but needs to be double checked
-    ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
-    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
-    CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
-    mkdir -p "$CELESTIA_DATA_DIR"
-
-	# Run the Celestia setup script (use absolute path)
-	CELESTIA_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_celestia_quicknode.sh"
-	sg docker -c "bash \"$CELESTIA_SCRIPT\" \"$TARGET_USER\" \"$QUICKNODE_API_TOKEN\" \"$QUICKNODE_HOST\" \"$CELESTIA_KEY_SEED\" \"$ROLLUP_GENESIS_FILE\" \"$ROLLUP_CONFIG_FILE\" \"$CELESTIA_DATA_DIR\""
-fi
-
-
-# Setup the observability stack as target user
-echo "Setting up observability stack as $TARGET_USER"
-cd /home/$TARGET_USER
-sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/sov-observability.git
-cd sov-observability
-
-# Configure telegraf with provided parameters
-if [ -n "$MONITORING_URL" ] && [ -n "$INFLUX_TOKEN" ] && [ -n "$HOSTNAME" ]; then
-    echo "Configuring telegraf with provided parameters"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
-    sudo sed -i "s|{MONITORING_URL}|$MONITORING_URL|g" telegraf/telegraf.conf
-    sudo sed -i "s|{INFLUX_TOKEN}|$INFLUX_TOKEN|g" telegraf/telegraf.conf
-    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" telegraf/telegraf.conf
-else
-    echo "Warning: Telegraf parameters not fully provided, using defaults from config file"
-fi
-
-# Configure Grafana Alloy with central config if password provided
-if [ -n "$ALLOY_PASSWORD" ] && [ -n "$HOSTNAME" ]; then
-    echo "Configuring Grafana Alloy with central config"
-    sudo -u $TARGET_USER git checkout preston/cfn-template
-    sudo sed -i "s|config.local.alloy|config.central.alloy|g" docker-compose.yml
-    sudo sed -i "s|{ALLOY_PASSWORD}|$ALLOY_PASSWORD|g" grafana-alloy/config.central.alloy
-    sudo sed -i "s|{HOSTNAME}|$HOSTNAME|g" grafana-alloy/config.central.alloy
-else
-    echo "Alloy password not provided (or missing monitoring hostname), using local config"
-fi
-
-sudo -u $TARGET_USER sg docker -c 'make start' # Now your grafana is at localhost:3000. Username: admin, passwor: admin123
 
 
 echo "Creating systemd service for rollup"
