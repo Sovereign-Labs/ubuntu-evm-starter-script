@@ -298,14 +298,23 @@ else
 fi
 
 # ---------- Setup EVM Pinned addresses -----
-ROLLUP_EXEC_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/evm_pinned_cache.json"
+ROLLUP_EXEC_CONFIG_FILE_CELESTIA="/home/$TARGET_USER/rollup-starter/configs/celestia/evm_pinned_cache.json"
+ROLLUP_EXEC_CONFIG_FILE_MOCK_DA="/home/$TARGET_USER/rollup-starter/configs/mock_da/evm_pinned_cache.json"
+ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL="/home/$TARGET_USER/rollup-starter/configs/mock_da_external/evm_pinned_cache.json"
+
 
 echo "Setting up EVM pinned addresses: '$EVM_PINNED_ADDRESSES'"
 echo "Execution config path: $ROLLUP_EXEC_CONFIG_FILE"
 PINNED_ADDRESSES_SCRIPT="$(cd "$(dirname "$0")" && pwd)/setup_evm_pinned_addresses.sh"
-"$PINNED_ADDRESSES_SCRIPT" "$ROLLUP_EXEC_CONFIG_FILE" "$EVM_PINNED_ADDRESSES" "$TARGET_USER"
-echo "Rollup execution config after setup:"
-cat $ROLLUP_EXEC_CONFIG_FILE
+"$PINNED_ADDRESSES_SCRIPT" "$ROLLUP_EXEC_CONFIG_FILE_CELESTIA" "$EVM_PINNED_ADDRESSES" "$TARGET_USER"
+"$PINNED_ADDRESSES_SCRIPT" "$ROLLUP_EXEC_CONFIG_FILE_MOCK_DA" "$EVM_PINNED_ADDRESSES" "$TARGET_USER"
+"$PINNED_ADDRESSES_SCRIPT" "$ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL" "$EVM_PINNED_ADDRESSES" "$TARGET_USER"
+echo "Rollup execution configs after setup $ROLLUP_EXEC_CONFIG_FILE_CELESTIA:"
+cat "$ROLLUP_EXEC_CONFIG_FILE_CELESTIA"
+echo "Rollup execution configs after setup $ROLLUP_EXEC_CONFIG_FILE_MOCK_DA:"
+cat "$ROLLUP_EXEC_CONFIG_FILE_MOCK_DA"
+echo "Rollup execution configs after setup $ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL:"
+cat "$ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL"
 echo "Set up of EVM pinned addresses is done"
 # ---------- END of setup EVM Pinned addresses -----
 
