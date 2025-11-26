@@ -30,7 +30,7 @@ MONITORING_URL=""
 INFLUX_TOKEN=""
 HOSTNAME=""
 ALLOY_PASSWORD=""
-BRANCH_NAME="preston/update-to-nightly"
+BRANCH_NAME="main"
 MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
 
@@ -279,7 +279,7 @@ sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres_connection_string|postgres_connection_string|g" {} \; # Uncomment the postgres connection string
 if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
     echo "Updating mock DA connection string in config files"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|connection_string = \"sqlite://rollup-state/mock_da.sqlite?mode=rwc\"|connection_string = \"$MOCK_DA_CONNECTION_STRING\"|g" {} \; 
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|{MOCK_DA_CONNECTION_STRING}|$MOCK_DA_CONNECTION_STRING|g" {} \; 
 fi
 
 # Update is_replica setting based on --is-primary flag
@@ -409,8 +409,8 @@ if [ "$SETUP_CELESTIA" = true ]; then
     echo "Building with celestia_da feature"
     sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --features celestia_da --features mock_zkvm --no-default-features'
 else
-    echo "Building without celestia_da feature"
-    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release'
+    echo "Building without mock_da feature"
+    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --no-default-features --features=mock_da_external,mock_zkvm'
 fi
 cd /home/$TARGET_USER
  
@@ -447,6 +447,11 @@ if [ ! -L /var/log/journal ]; then
 else
     echo "ERROR: Symlink /var/log/journal already exists"
     exit 1
+fi
+
+
+if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
+    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/mock_external/rollup_aws.toml"
 fi
 
 # Configure journal limits - 50G is safe on the large mounted disk
