@@ -285,7 +285,7 @@ sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres_connection_string|postgres_connection_string|g" {} \; # Uncomment the postgres connection string
 if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
     echo "Updating mock DA connection string in config files"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|{MOCK_DA_CONNECTION_STRING}|$MOCK_DA_CONNECTION_STRING|g" {} \;
+    sudo find ./configs/ -name "*.toml" -type f -exec   sed -i "s|127\.0\.0\.1|$MOCK_DA_CONNECTION_STRING|g" {} \;
 fi
 
 # Update is_replica setting based on --is-primary flag
