@@ -279,7 +279,7 @@ sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|postgres://postgres:
 sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|# postgres_connection_string|postgres_connection_string|g" {} \; # Uncomment the postgres connection string
 if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
     echo "Updating mock DA connection string in config files"
-    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|connection_string = \"sqlite://rollup-state/mock_da.sqlite?mode=rwc\"|connection_string = \"$MOCK_DA_CONNECTION_STRING\"|g" {} \; 
+    sudo find ./configs/ -name "*.toml" -type f -exec sed -i "s|{MOCK_DA_CONNECTION_STRING}|$MOCK_DA_CONNECTION_STRING|g" {} \; 
 fi
 
 # Update is_replica setting based on --is-primary flag
@@ -410,7 +410,7 @@ if [ "$SETUP_CELESTIA" = true ]; then
     sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --features celestia_da --features mock_zkvm --no-default-features'
 else
     echo "Building without celestia_da feature"
-    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release'
+    sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --no-default-features --features=mock_da_external,mock_zkvm'
 fi
 cd /home/$TARGET_USER
  
