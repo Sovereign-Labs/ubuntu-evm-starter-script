@@ -299,8 +299,8 @@ fi
 
 # ---------- Setup EVM Pinned addresses -----
 ROLLUP_EXEC_CONFIG_FILE_CELESTIA="/home/$TARGET_USER/rollup-starter/configs/celestia/evm_pinned_cache.json"
-ROLLUP_EXEC_CONFIG_FILE_MOCK_DA="/home/$TARGET_USER/rollup-starter/configs/mock_da/evm_pinned_cache.json"
-ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL="/home/$TARGET_USER/rollup-starter/configs/mock_da_external/evm_pinned_cache.json"
+ROLLUP_EXEC_CONFIG_FILE_MOCK_DA="/home/$TARGET_USER/rollup-starter/configs/mock/evm_pinned_cache.json"
+ROLLUP_EXEC_CONFIG_FILE_MOCK_DA_EXTERNAL="/home/$TARGET_USER/rollup-starter/configs/mock_external/evm_pinned_cache.json"
 
 
 echo "Setting up EVM pinned addresses: '$EVM_PINNED_ADDRESSES'"
