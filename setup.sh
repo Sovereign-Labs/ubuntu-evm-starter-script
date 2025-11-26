@@ -299,7 +299,7 @@ else
 	# TODO: determine genesis and config file paths.
 	# This probably work, but needs to be double checked
     ROLLUP_GENESIS_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/genesis.json"
-    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup.toml"
+    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/celestia/rollup_aws.toml"
     ROLLUP_CONST_FILE="/home/$TARGET_USER/rollup-starter/constants.toml"
     CELESTIA_DATA_DIR="/home/$TARGET_USER/rollup-starter/rollup-state/celestia-data"
     mkdir -p "$CELESTIA_DATA_DIR"
@@ -475,7 +475,7 @@ User=$TARGET_USER
 WorkingDirectory=/home/$TARGET_USER/rollup-starter
 Environment="OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317"
 Environment="SOV_ENVIRONMENT_NAME=$HOSTNAME"
-ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup
+ExecStart=/home/$TARGET_USER/rollup-starter/target/release/rollup --rollup-config-path $ROLLUP_CONFIG_FILE
 Restart=always
 RestartSec=10
 StandardOutput=journal
