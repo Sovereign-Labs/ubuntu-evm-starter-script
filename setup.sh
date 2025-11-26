@@ -449,6 +449,11 @@ else
     exit 1
 fi
 
+
+if [ -n "$MOCK_DA_CONNECTION_STRING" ]; then
+    ROLLUP_CONFIG_FILE="/home/$TARGET_USER/rollup-starter/configs/mock_external/rollup_aws.toml"
+fi
+
 # Configure journal limits - 50G is safe on the large mounted disk
 echo "Restarting journald"
 sudo mkdir -p /etc/systemd/journald.conf.d && sudo tee /etc/systemd/journald.conf.d/rollup.conf > /dev/null << 'EOF'
