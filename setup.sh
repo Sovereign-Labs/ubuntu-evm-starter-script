@@ -34,7 +34,7 @@ ALLOY_PASSWORD=""
 BRANCH_NAME="main"
 MOCK_DA_CONNECTION_STRING=""
 IS_PRIMARY=false
-EVM_PINNED_ADDRESSES="''"
+EVM_PINNED_ADDRESSES=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -109,7 +109,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --celestia-genesis-da-height <string> : Celestia height"
             echo "  --celestia-batch-namespace <string>   : Batch namespace name"
             echo "  --is-primary                          : Set this node as primary (optional, default: replica)"
-            echo "  --evm-pinned-addresses                : List of comma separated EVM address for RAM pinning, for example --evm-pinned-addresses '0x006e4eb63413050681079338404e07a1d72ab697,0xe7d2b7610d1574610cbd903ea896c59d17470633'"
+            echo "  --evm-pinned-addresses                : List of comma separated EVM address for RAM pinning. (optional) for example --evm-pinned-addresses '0x006e4eb63413050681079338404e07a1d72ab697,0xe7d2b7610d1574610cbd903ea896c59d17470633'"
             exit 0
             ;;
         *)

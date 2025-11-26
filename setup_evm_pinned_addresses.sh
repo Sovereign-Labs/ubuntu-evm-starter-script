@@ -28,7 +28,11 @@ curl -sSfL "${SOURCE_URL}" -o "${FILE_LOCATION}"
 
 # Convert comma-separated addresses to JSON array and update the file
 echo "Setting privileged_deployer_addresses..."
-ADDRESSES_JSON=$(echo "${ADDRESSES}" | jq -R 'split(",")')
+if [[ -z "${ADDRESSES}" ]]; then
+    ADDRESSES_JSON="[]"
+else
+    ADDRESSES_JSON=$(echo "${ADDRESSES}" | jq -R 'split(",")')
+fi
 jq --argjson addrs "${ADDRESSES_JSON}" '.privileged_deployer_addresses = $addrs' "${FILE_LOCATION}" > "${FILE_LOCATION}.tmp"
 mv "${FILE_LOCATION}.tmp" "${FILE_LOCATION}"
 
