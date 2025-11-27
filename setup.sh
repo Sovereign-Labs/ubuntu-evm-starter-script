@@ -42,23 +42,38 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --quicknode-token)
-            QUICKNODE_API_TOKEN="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                QUICKNODE_API_TOKEN="$2"
+            fi
             shift 2
             ;;
         --quicknode-host)
-            QUICKNODE_HOST="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                QUICKNODE_HOST="$2"
+            fi
             shift 2
             ;;
         --celestia-seed)
-            CELESTIA_KEY_SEED="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                CELESTIA_KEY_SEED="$2"
+            fi
             shift 2
             ;;
         --monitoring-url)
-            MONITORING_URL="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                MONITORING_URL="$2"
+            fi
             shift 2
             ;;
         --influx-token)
-            INFLUX_TOKEN="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                INFLUX_TOKEN="$2"
+            fi
             shift 2
             ;;
         --hostname)
@@ -66,15 +81,24 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --alloy-password)
-            ALLOY_PASSWORD="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                ALLOY_PASSWORD="$2"
+            fi
             shift 2
             ;;
         --branch-name)
-            BRANCH_NAME="$2"
+            # Only set if non-empty
+            if [ -n "$2" ]; then
+                BRANCH_NAME="$2"
+            fi
             shift 2
             ;;
         --mock-da-connection-string)
-            MOCK_DA_CONNECTION_STRING="$2"
+            # Only set if non-empty (but allow IP addresses)
+            if [ -n "$2" ]; then
+                MOCK_DA_CONNECTION_STRING="$2"
+            fi
             shift 2
             ;;
         --celestia-genesis-da-height)
@@ -153,7 +177,7 @@ EOF
 
 # Install system dependencies
 sudo apt update
-sudo apt install -y clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose jq
+sudo apt install -y clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose jq nvme-cli pv mdadm
 
 # Install Rust as the target user
 echo "Installing Rust as $TARGET_USER"
@@ -165,30 +189,73 @@ echo "Cloning rollup-starter as $TARGET_USER"
 cd /home/$TARGET_USER
 sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
 cd rollup-starter
+echo "Checking out branch $BRANCH_NAME"
 sudo -u $TARGET_USER git switch $BRANCH_NAME
 
-# Find the largest and second largest unmounted block devices
-# This avoids hardcoding nvme1n1 which might be the root volume on some AWS instances
-UNMOUNTED_DEVICES=$(lsblk -ndo NAME,SIZE,MOUNTPOINT,TYPE | \
-    awk 'NF==3 && $3=="disk" {print $2,$1}' | \
-    sort -hr)
+# Detect EBS volumes and NVMe instance storage separately
+# EBS volumes have serial numbers starting with "vol-"
+# NVMe instance storage has serial numbers like "AWS[instance-id][disk-number]"
 
-LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n1 | awk '{print $2}')
-SECOND_LARGEST_UNMOUNTED=$(echo "$UNMOUNTED_DEVICES" | head -n2 | tail -n1 | awk '{print $2}')
+echo "Detecting storage devices..."
 
-if [ -z "$LARGEST_UNMOUNTED" ]; then
-    echo "Error: No unmounted block devices found. Cannot set up rollup-state storage."
+# Find all EBS volumes (sorted by size, largest first)
+EBS_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
+    awk '$3=="disk" {print $2,$1}' | \
+    while read size name; do
+        if [[ "$name" == nvme* ]]; then
+            SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
+            if [[ "$SERIAL" == vol* ]]; then
+                echo "$size $name"
+            fi
+        fi
+    done | sort -hr)
+
+# Get largest EBS volume (this will be our backing store, not the small root volume)
+LARGEST_EBS=$(echo "$EBS_DEVICES" | head -n1 | awk '{print $2}')
+
+if [ -n "$LARGEST_EBS" ]; then
+    EBS_DEVICE="/dev/$LARGEST_EBS"
+    EBS_SIZE=$(echo "$EBS_DEVICES" | head -n1 | awk '{print $1}')
+    echo "Found EBS backing volume: $EBS_DEVICE (size: $(numfmt --to=iec-i --suffix=B $EBS_SIZE))"
+else
+    EBS_DEVICE=""
+    echo "Warning: No EBS backing volume found."
+fi
+
+# Find NVMe instance storage devices (exclude all EBS volumes)
+NVME_DEVICES=$(lsblk -nbdo NAME,SIZE,TYPE | \
+    awk '$3=="disk" {print $2,$1}' | \
+    while read size name; do
+        if [[ "$name" == nvme* ]]; then
+            SERIAL=$(sudo nvme id-ctrl -v /dev/$name 2>/dev/null | grep -i "^sn" | awk '{print $3}' | tr -d ' ')
+            # Include only instance storage (exclude EBS volumes with vol-* serial)
+            if [[ "$SERIAL" != vol* ]]; then
+                echo "$size $name"
+            fi
+        fi
+    done | sort -hr)
+
+LARGEST_NVME=$(echo "$NVME_DEVICES" | head -n1 | awk '{print $2}')
+SECOND_LARGEST_NVME=$(echo "$NVME_DEVICES" | head -n2 | tail -n1 | awk '{print $2}')
+
+if [ -z "$LARGEST_NVME" ]; then
+    echo "Error: No NVMe instance storage found. Cannot set up rollup-state storage."
     exit 1
 fi
-if [ -z "$SECOND_LARGEST_UNMOUNTED" ]; then
-    echo "Error: No second unmounted block device found. Logs will be stored on the root volume."
+
+if [ -z "$SECOND_LARGEST_NVME" ]; then
+    echo "Error: No second NVMe instance storage found for logs storage."
     exit 1
 fi
 
-DEVICE="/dev/$LARGEST_UNMOUNTED"
-echo "Using $DEVICE (largest unmounted block device) for rollup-state storage"
-LOGS_DEVICE="/dev/$SECOND_LARGEST_UNMOUNTED"
-echo "Using $LOGS_DEVICE (second largest unmounted block device) for logs storage"
+# Primary data storage will use dm-writecache with NVMe as fast cache and EBS as backing store
+DATA_DEVICE="/dev/$LARGEST_NVME"
+LOGS_DEVICE="/dev/$SECOND_LARGEST_NVME"
+echo "Using $DATA_DEVICE (NVMe instance storage) for rollup state"
+echo "Using $LOGS_DEVICE (NVMe instance storage) for logs storage"
+
+# This will be the device we mount at rollup-state. Initialize it to the NVMe: if we set up RAID, $DEVICE will point to the mdadm node instead.
+DEVICE="$DATA_DEVICE"
 
 # Mount the logs device and move all syslogging to it.
 sudo mkdir -p /mnt/logs && sudo mkfs.ext4 -F "$LOGS_DEVICE" && sudo mount "$LOGS_DEVICE" /mnt/logs
@@ -228,13 +295,94 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
     rm -rf "$ROLLUP_STATE_DIR"
 fi
 
-sudo mkfs.ext4 -F "$DEVICE" && sudo mkdir -p "$ROLLUP_STATE_DIR" && sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
-# Get UUID of the rollup-state device for stable fstab entry
-ROLLUP_STATE_UUID=$(sudo blkid -s UUID -o value "$DEVICE")
-# Add the new directory to /etc/fstab if not already present
-if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
-    echo "UUID=$ROLLUP_STATE_UUID $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+# Set up storage with RAID1 if EBS backing store is available
+if [ -n "$EBS_DEVICE" ]; then
+    echo "Setting up RAID1 with NVMe ($DATA_DEVICE) as primary and EBS ($EBS_DEVICE) as write-mostly..."
+
+    MD_DEVICE="/dev/md0"
+
+    # Check if EBS already has RAID metadata (restoration scenario)
+    if sudo mdadm --examine "$EBS_DEVICE" &>/dev/null; then
+        echo "EBS volume has existing RAID metadata - this will need recovering (TODO)"
+        exit 1
+
+        # Assemble degraded array with just EBS
+        # sudo mdadm --assemble --run "$MD_DEVICE" "$EBS_DEVICE" || true
+        # sleep 2
+
+        # # Wipe NVMe and add it to the array
+        # sudo wipefs -a "$DATA_DEVICE"
+        # sudo mdadm --manage "$MD_DEVICE" --add "$DATA_DEVICE"
+
+        # # Mark EBS as write-mostly (NVMe serves reads, EBS is backup)
+        # sudo mdadm "$MD_DEVICE" --fail "$EBS_DEVICE"
+        # sudo mdadm "$MD_DEVICE" --remove "$EBS_DEVICE"
+        # sudo mdadm "$MD_DEVICE" --re-add "$EBS_DEVICE" --writemostly
+
+        # echo "Existing array assembled. NVMe will resync from EBS in background."
+
+    elif sudo blkid "$EBS_DEVICE" | grep -q "TYPE="; then
+        echo "Error: EBS volume $EBS_DEVICE has a filesystem but no RAID metadata!"
+        echo "This is an unexpected state. Manual intervention required."
+        sudo blkid "$EBS_DEVICE"
+        exit 1
+    else
+        echo "EBS volume is empty - creating fresh RAID1 array..."
+
+        # Wipe both devices to be safe
+        sudo wipefs -a "$DATA_DEVICE"
+        sudo wipefs -a "$EBS_DEVICE"
+
+        # Create RAID1 with NVMe first (will be primary read device)
+        # EBS is added as write-mostly with write-behind buffer
+        sudo mdadm --create "$MD_DEVICE" --level=1 --raid-devices=2 --assume-clean --bitmap=/mnt/logs/md0.bitmap --bitmap-chunk=8M --write-behind=16383 "$DATA_DEVICE" --write-mostly "$EBS_DEVICE"
+
+        # Create ext4 filesystem on RAID device
+        sudo mkfs.ext4 -F "$MD_DEVICE"
+
+        echo "Fresh RAID1 array created."
+    fi
+
+    # Wait for RAID to be ready
+    sleep 2
+
+    # Verify RAID is active
+    if ! grep -q "md0" /proc/mdstat; then
+        echo "Error: RAID device not found in /proc/mdstat"
+        cat /proc/mdstat
+        exit 1
+    fi
+    echo "RAID status:"
+    cat /proc/mdstat
+
+    # Mount RAID device
+    DEVICE="$MD_DEVICE"
+    sudo mkdir -p "$ROLLUP_STATE_DIR"
+    sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
+
+    # Add to fstab
+    if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
+        echo "$MD_DEVICE $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+    fi
+
+    # Save RAID configuration
+    sudo mdadm --detail --scan | sudo tee -a /etc/mdadm/mdadm.conf
+    sudo update-initramfs -u
+
+    echo "RAID1 setup complete - NVMe serves reads, EBS provides persistence"
+else
+    # No EBS backing store - use NVMe directly (legacy behavior)
+    echo "No EBS backing store found - using NVMe directly without replication"
+    sudo mkfs.ext4 -F "$DEVICE"
+    sudo mkdir -p "$ROLLUP_STATE_DIR"
+    sudo mount -o noatime "$DEVICE" "$ROLLUP_STATE_DIR"
+
+    ROLLUP_STATE_UUID=$(sudo blkid -s UUID -o value "$DEVICE")
+    if ! grep -q "$ROLLUP_STATE_DIR" /etc/fstab; then
+        echo "UUID=$ROLLUP_STATE_UUID $ROLLUP_STATE_DIR ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+    fi
 fi
+
 sudo systemctl daemon-reload
 sudo chown -R $TARGET_USER:$TARGET_USER "$ROLLUP_STATE_DIR"
 
@@ -495,8 +643,6 @@ MaxRetentionSec=30day
 EOF
 sudo systemctl restart systemd-journald
 echo "Journald configured."
-
-
 
 echo "Creating systemd service for rollup"
 sudo tee /etc/systemd/system/rollup.service > /dev/null << EOF
