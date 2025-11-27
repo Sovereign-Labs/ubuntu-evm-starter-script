@@ -72,29 +72,21 @@ apt-get update
 apt-get install -y git curl awscli jq
 
 # Get EC2 instance ID for hostname
-export INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-echo "Instance ID: $INSTANCE_ID"
 
-# Download the latest setup script from master branch
 echo "Downloading setup scripts from GitHub..."
-curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/master/setup_mock_da.sh -o /tmp/setup.sh
-
-# Make it executable and owned by ubuntu user
+curl -L https://raw.githubusercontent.com/Sovereign-Labs/ubuntu-evm-starter-script/nikolai/mock-da-server-scripts/setup_mock_da.sh -o /tmp/setup.sh
 chmod +x /tmp/setup.sh
 chown ubuntu:ubuntu /tmp/setup.sh
 
-# Retrieve mock database credentials from Secrets Manager
 echo "Retrieving mock database credentials..."
 SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --region "$REGION" --query SecretString --output text)
 DB_USERNAME=$(echo "$SECRET_JSON" | jq -r .username)
 DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r .password)
 
-# Construct database connection string
 export MOCK_DA_DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
-echo "Mock DA database connection string constructed (password hidden)"
+echo "Mock DA database connection string constructed $MOCK_DA_DATABASE_URL"
 
-# Build setup command arguments
-SETUP_ARGS="--hostname \"$INSTANCE_ID\" --mock-da-connection-string \"$MOCK_DA_DATABASE_URL\""
+SETUP_ARGS=" --mock-da-connection-string \"$MOCK_DA_DATABASE_URL\""
 
 if [ -n "$BRANCH_NAME" ]; then
   SETUP_ARGS="$SETUP_ARGS --branch-name \"$BRANCH_NAME\""
@@ -102,8 +94,7 @@ fi
 
 # Execute the setup script as ubuntu user with sudo privileges
 echo "Executing mock DA setup script as ubuntu user..."
-echo "MOCK_DA_DATABASE_URL is: $MOCK_DA_DATABASE_URL"
 
-sudo -u ubuntu -H MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL" INSTANCE_ID="$INSTANCE_ID" bash -c "sudo /tmp/setup.sh $SETUP_ARGS"
+sudo -u ubuntu -H MOCK_DA_DATABASE_URL="$MOCK_DA_DATABASE_URL" bash -c "sudo /tmp/setup.sh $SETUP_ARGS"
 
 echo "Mock DA user data script completed at $(date)"
