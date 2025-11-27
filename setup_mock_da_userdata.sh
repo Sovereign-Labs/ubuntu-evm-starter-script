@@ -79,8 +79,8 @@ exec 2>&1
 echo "Starting Mock DA setup script at $(date)"
 
 # Install system dependencies
-apt-get update
-apt-get install -y git curl awscli jq clang make llvm-dev libclang-dev libssl-dev pkg-config docker.io docker-compose
+sudo apt-get update
+sudo apt-get install -y git curl awscli jq clang make llvm-dev libclang-dev libssl-dev pkg-config
 
 # Retrieve database credentials from AWS Secrets Manager
 echo "Retrieving mock database credentials..."
@@ -107,21 +107,16 @@ EOF
 
 # Install Rust as the target user
 echo "Installing Rust as $TARGET_USER"
-sudo -u $TARGET_USER bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
-export PATH="/home/$TARGET_USER/.cargo/bin:$PATH"
+sudo -H -u $TARGET_USER bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
 
 # Setup starter repo as target user
 echo "Cloning rollup-starter as $TARGET_USER"
-cd /home/$TARGET_USER
-sudo -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git
-cd rollup-starter
-sudo -u $TARGET_USER git switch "$BRANCH_NAME"
+sudo -H -u $TARGET_USER git clone https://github.com/Sovereign-Labs/rollup-starter.git /home/$TARGET_USER/rollup-starter
+sudo -H -u $TARGET_USER git -C /home/$TARGET_USER/rollup-starter switch "$BRANCH_NAME"
 
 # Build the rollup as target user
-cd /home/$TARGET_USER/rollup-starter
 echo "Building mock da as $TARGET_USER"
-sudo -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --release --bin mock-da-server --no-default-features --features=mock_da_external,mock_zkvm'
-cd /home/$TARGET_USER
+sudo -H -u $TARGET_USER bash -c 'source $HOME/.cargo/env && cargo build --manifest-path /home/'"$TARGET_USER"'/rollup-starter/Cargo.toml --release --bin mock-da-server --no-default-features --features=mock_da_external,mock_zkvm'
 
 echo "Creating systemd service for mock-da"
 sudo tee /etc/systemd/system/mock-da.service > /dev/null << EOF
