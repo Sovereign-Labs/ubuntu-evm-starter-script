@@ -335,7 +335,7 @@ if [ -n "$EBS_DEVICE" ]; then
 
         # Create RAID1 with NVMe first (will be primary read device)
         # EBS is added as write-mostly with write-behind buffer
-        sudo mdadm --create "$MD_DEVICE" --level=1 --raid-devices=2 --assume-clean --bitmap=/mnt/logs/md0.bitmap --bitmap-chunk=8M --write-behind=16383 "$DATA_DEVICE" --write-mostly "$EBS_DEVICE"
+        sudo mdadm --create "$MD_DEVICE" --level=1 --raid-devices=2 --assume-clean --bitmap=internal --bitmap-chunk=8M --write-behind=16383 "$DATA_DEVICE" --write-mostly "$EBS_DEVICE"
 
         # Create ext4 filesystem on RAID device
         sudo mkfs.ext4 -F "$MD_DEVICE"
