@@ -296,7 +296,8 @@ if [ -d "$ROLLUP_STATE_DIR" ]; then
 fi
 
 # Set up storage with RAID1 if EBS backing store is available
-if [ -n "$EBS_DEVICE" ]; then
+# if [ -n "$EBS_DEVICE" ]; then
+if false; then
     echo "Setting up RAID1 with NVMe ($DATA_DEVICE) as primary and EBS ($EBS_DEVICE) as write-mostly..."
 
     MD_DEVICE="/dev/md0"
