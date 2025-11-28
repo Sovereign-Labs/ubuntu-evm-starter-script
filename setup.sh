@@ -335,7 +335,13 @@ if [ -n "$EBS_DEVICE" ]; then
 
         # Create RAID1 with NVMe first (will be primary read device)
         # EBS is added as write-mostly with write-behind buffer
-        sudo mdadm --create "$MD_DEVICE" --level=1 --raid-devices=2 --assume-clean --bitmap=internal --bitmap-chunk=8M --write-behind=16383 "$DATA_DEVICE" --write-mostly "$EBS_DEVICE"
+        # `echo y` is because of:\
+        # ```
+        # mdadm: largest drive (/dev/nvme0n1) exceeds size (927602240K) by more than 1%
+        # Continue creating array?
+        # ```
+        # which we don't care about (the internal NVMes have about ~884 GiB usable, and EBS is created with 900GiB)
+        echo "y" | sudo mdadm --create "$MD_DEVICE" --level=1 --raid-devices=2 --assume-clean --bitmap=internal --bitmap-chunk=8M --write-behind=16383 "$DATA_DEVICE" --write-mostly "$EBS_DEVICE"
 
         # Create ext4 filesystem on RAID device
         sudo mkfs.ext4 -F "$MD_DEVICE"
