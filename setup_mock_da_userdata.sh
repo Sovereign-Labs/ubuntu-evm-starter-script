@@ -128,7 +128,7 @@ After=network.target
 Type=simple
 User=$TARGET_USER
 WorkingDirectory=/home/$TARGET_USER/rollup-starter
-ExecStart=/home/$TARGET_USER/rollup-starter/target/release/mock-da-server --host 0.0.0.0 --db "${MOCK_DA_CONNECTION_STRING}"
+ExecStart=/home/$TARGET_USER/rollup-starter/target/release/mock-da-server --host 0.0.0.0 --db "${MOCK_DA_CONNECTION_STRING}" --block-time-ms=6000
 Restart=always
 RestartSec=10
 StandardOutput=journal
