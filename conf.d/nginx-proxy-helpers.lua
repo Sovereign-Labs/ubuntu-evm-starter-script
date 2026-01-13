@@ -236,8 +236,6 @@ function M.find_rest_config(path)
     return M.rest_endpoints.default
 end
 
--- Get request config (cost, routing, method) for any endpoint
--- Handles both REST endpoints and JSON-RPC method extraction
 -- Get request configuration for a given URI.
 -- For HTTP endpoints: returns cost, use_leader, nil
 -- For WS endpoints: returns client_request_cost, backend_push_cost, use_leader
