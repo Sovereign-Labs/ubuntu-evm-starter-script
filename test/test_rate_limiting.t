@@ -315,7 +315,7 @@ $::LocationConfig
 --- request
 GET /test-ws-follower
 --- response_body
-{"jsonrpc":"2.0","result":"0xabc123","id":1}
+{"jsonrpc":"2.0","result":"follower_0xabc123","id":1}
 --- error_code: 200
 --- timeout: 5
 
@@ -374,9 +374,9 @@ $::LocationConfig
 GET /test-ws-streaming
 --- response_body
 received 3 messages
-1: {"jsonrpc":"2.0","result":"0xabc123","id":1}
-2: {"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xabc123","result":{"number":"0x1"}}}
-3: {"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xabc123","result":{"number":"0x2"}}}
+1: {"jsonrpc":"2.0","result":"follower_0xabc123","id":1}
+2: {"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"follower_0xabc123","result":{"number":"0x1"}}}
+3: {"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"follower_0xabc123","result":{"number":"0x2"}}}
 --- error_code: 200
 --- timeout: 5
 
@@ -807,7 +807,7 @@ $::LocationConfig
                         table.insert(messages, "close")
                         break
                     elseif typ == "text" then
-                        if data:match('"result":"0x') then
+                        if data:match('"result":"follower_0x') then
                             got_confirmation = true
                             table.insert(messages, "confirm")
                         elseif data:match("eth_subscription") then
