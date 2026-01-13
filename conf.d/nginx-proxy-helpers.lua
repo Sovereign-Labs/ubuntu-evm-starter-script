@@ -63,23 +63,28 @@ M.SPINLOCK_MAX_ATTEMPTS = 10      -- Max spinlock attempts
 M.BUCKET_CAPACITY = BUCKET_CAPACITY or 150  -- Maximum tokens
 M.REFILL_RATE = REFILL_RATE or 150          -- Tokens added per second
 
--- Subscription costs (Infura-style pricing model)
-M.SUBSCRIBE_COST = 5              -- Cost for eth_subscribe/eth_unsubscribe call
-M.PUSHED_EVENT_COST = 80          -- Cost per subscription event pushed from backend
+-- JSON-RPC subscription costs (Infura-style pricing model)
+M.SUBSCRIBE_COST = 5                    -- Cost for eth_subscribe/eth_unsubscribe call
+M.JSONRPC_PUSHED_EVENT_COST = 80        -- Cost per eth_subscription event pushed from backend
 
 -- ============================================================================
 -- REST ENDPOINT CONFIGURATION
 -- ============================================================================
--- Each endpoint specifies:
---   cost: Number of tokens consumed per request
+-- HTTP endpoints use:
+--   cost: Number of tokens consumed per request (includes response)
 --   use_leader: true = route to leader (writes), false = route to follower (reads)
 --
--- Endpoints ending in /ws are WebSocket subscription endpoints.
+-- WebSocket endpoints (ending in /ws) use:
+--   client_request_cost: Tokens per client message (0 for subscribe-only)
+--   backend_push_cost: Tokens per backend push (0 for request/response style)
+--   use_leader: true = route to leader (writes), false = route to follower (reads)
+--
 -- Parameterized paths use {param} syntax (matched via pattern at runtime).
 --
 -- Cost guidelines:
---   5    = Cheap operations (health checks, subscriptions, simple metadata)
---   80   = Standard operations (single record lookups, transactions)
+--   0    = Free (e.g., responses to client requests on bidirectional WS)
+--   5    = Cheap operations (health checks, simple metadata)
+--   80   = Standard operations (single record lookups, transactions, subscription events)
 --   255  = Expensive operations (list queries, log searches)
 --   300  = Very expensive (simulations, gas estimation)
 --   1000 = Extremely expensive (debug traces, nested expansions)
@@ -93,8 +98,8 @@ M.rest_endpoints = {
     ["/ledger/slots/finalized"] = { cost = 1000, use_leader = false },
     ["/ledger/slots/{slotId}"] = { cost = 1000, use_leader = false },
     ["/ledger/slots/{slotId}/events"] = { cost = 1000, use_leader = false },
-    ["/ledger/slots/latest/ws"] = { cost = 5, use_leader = false },
-    ["/ledger/slots/finalized/ws"] = { cost = 5, use_leader = false },
+    ["/ledger/slots/latest/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
+    ["/ledger/slots/finalized/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
 
     -- LEDGER: BATCHES (worst case: children=1 returns all txs->events)
     ["/ledger/batches/{batchId}"] = { cost = 1000, use_leader = false },
@@ -118,19 +123,19 @@ M.rest_endpoints = {
 
     -- LEDGER: PROOFS
     ["/ledger/aggregated-proofs/latest"] = { cost = 80, use_leader = false },
-    ["/ledger/aggregated-proofs/latest/ws"] = { cost = 5, use_leader = false },
+    ["/ledger/aggregated-proofs/latest/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
 
     -- SEQUENCER
     ["/sequencer/txs"] = { cost = 80, use_leader = true },
-    ["/sequencer/txs/ws"] = { cost = 5, use_leader = false },
-    ["/sequencer/txs/submit/ws"] = { cost = 80, use_leader = true },  -- Bidirectional: client streams tx submissions
+    ["/sequencer/txs/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
+    ["/sequencer/txs/submit/ws"] = { client_request_cost = 80, backend_push_cost = 0, use_leader = true },  -- Bidirectional: client streams tx submissions, responses free
     ["/sequencer/txs/{txHash}"] = { cost = 80, use_leader = false },
     ["/sequencer/txs/{txHash}/status"] = { cost = 80, use_leader = false },
-    ["/sequencer/txs/{txHash}/ws"] = { cost = 5, use_leader = false },
+    ["/sequencer/txs/{txHash}/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
     ["/sequencer/ready"] = { cost = 5, use_leader = false },
     ["/sequencer/unstable/events"] = { cost = 255, use_leader = false },
     ["/sequencer/unstable/events/{eventOffset}"] = { cost = 80, use_leader = false },
-    ["/sequencer/events/ws"] = { cost = 5, use_leader = false },
+    ["/sequencer/events/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
 
     -- ROLLUP
     ["/rollup/base-fee-per-gas/latest"] = { cost = 80, use_leader = false },
@@ -161,11 +166,13 @@ end
 -- JSON-RPC METHOD CONFIGURATION
 -- ============================================================================
 -- Configuration for JSON-RPC methods on the /rpc endpoint.
--- Same structure as REST endpoints: cost + use_leader routing.
+-- Each method has: cost (client request cost) + use_leader (routing).
 --
 -- IMPORTANT: Only write transactions go to leader (eth_send*, realtime_send*).
--- Subscriptions (eth_subscribe) go to follower - the subscription itself is
--- cheap (cost=5), but each pushed event costs PUSHED_EVENT_COST (80).
+-- Subscriptions (eth_subscribe) go to follower - the subscription request is
+-- cheap (cost=5), but each pushed event costs JSONRPC_PUSHED_EVENT_COST (80).
+-- Request/response methods (like eth_getBalance) only charge for the request;
+-- the response is free.
 M.jsonrpc_methods = {
     -- NETWORK & CHAIN INFORMATION
     ["net_version"] = { cost = 5, use_leader = false },
@@ -231,6 +238,10 @@ end
 
 -- Get request config (cost, routing, method) for any endpoint
 -- Handles both REST endpoints and JSON-RPC method extraction
+-- Get request configuration for a given URI.
+-- For HTTP endpoints: returns cost, use_leader, nil
+-- For WS endpoints: returns client_request_cost, backend_push_cost, use_leader
+-- For JSON-RPC: returns cost, use_leader, method_name
 function M.get_request_config(uri, http_method, body)
     if uri == "/rpc" and http_method == "POST" and body then
         local method = body:match('"method"%s*:%s*"([^"]+)"')
@@ -241,6 +252,13 @@ function M.get_request_config(uri, http_method, body)
     end
 
     local cfg = M.find_rest_config(uri)
+
+    -- WebSocket endpoints use new field names
+    if cfg.client_request_cost ~= nil then
+        return cfg.client_request_cost, cfg.backend_push_cost, cfg.use_leader
+    end
+
+    -- HTTP endpoints use cost
     return cfg.cost, cfg.use_leader, nil
 end
 
@@ -377,12 +395,20 @@ function M.backend_to_client(ctx, backend_entry, backend_name)
             backend_entry.wb = nil
             break
         elseif typ == "text" or typ == "binary" then
-            -- Rate limit pushed events:
-            -- - JSON-RPC: only eth_subscription notifications (responses don't count)
-            -- - REST WebSocket: all backend messages are pushed events
-            local is_pushed_event = not ctx.is_jsonrpc or data:match('"method"%s*:%s*"eth_subscription"')
-            if is_pushed_event then
-                local ok = M.apply_rate_limit(ctx.client_ip, M.PUSHED_EVENT_COST, ctx.is_exempt)
+            -- Rate limit backend pushes:
+            -- - JSON-RPC: only eth_subscription notifications cost tokens (request/response are free)
+            -- - REST WebSocket: use backend_push_cost from endpoint config (0 = free, e.g., for tx submit responses)
+            local push_cost = 0
+            if ctx.is_jsonrpc then
+                if data:match('"method"%s*:%s*"eth_subscription"') then
+                    push_cost = M.JSONRPC_PUSHED_EVENT_COST
+                end
+            else
+                push_cost = ctx.backend_push_cost
+            end
+
+            if push_cost > 0 then
+                local ok = M.apply_rate_limit(ctx.client_ip, push_cost, ctx.is_exempt)
                 if not ok then
                     ngx.log(ngx.WARN, "Rate limit exceeded for pushed event, closing connection")
                     ctx.closing = true
@@ -517,12 +543,12 @@ end
 -- For subscribe-only endpoints, client typically doesn't send data messages.
 -- Returns: true to continue processing, false to close connection.
 local function handle_rest_ws_message(ctx, data, typ)
-    local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, ctx.endpoint_cost, ctx.is_exempt)
+    local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, ctx.client_request_cost, ctx.is_exempt)
     if not ok then
         if err_type == "busy" then
             ctx.client_wb:send_text('{"error":"Rate limit busy, try again"}')
         else
-            ctx.client_wb:send_text('{"error":"Rate limit exceeded","cost":' .. ctx.endpoint_cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
+            ctx.client_wb:send_text('{"error":"Rate limit exceeded","cost":' .. ctx.client_request_cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
         end
         return true  -- continue
     end
@@ -618,7 +644,8 @@ function M.handle_websocket()
     local follower_addr = backend_cache:get("follower") or leader_addr
 
     -- Get endpoint config (for REST WebSocket; JSON-RPC does per-message routing)
-    local endpoint_cost, endpoint_use_leader = M.get_request_config(uri, nil, nil)
+    -- For WS: returns client_request_cost, backend_push_cost, use_leader
+    local client_request_cost, backend_push_cost, endpoint_use_leader = M.get_request_config(uri, nil, nil)
 
     -- Build context object with all request state
     local ctx = {
@@ -629,7 +656,8 @@ function M.handle_websocket()
         is_exempt = (ngx.var.rate_limit_override ~= "0"),
         is_single_backend = (leader_addr == follower_addr),
         endpoint_use_leader = endpoint_use_leader,
-        endpoint_cost = endpoint_cost,
+        client_request_cost = client_request_cost,
+        backend_push_cost = backend_push_cost,
         backends = {
             leader = { wb = nil, addr = leader_addr },
             follower = { wb = nil, addr = follower_addr }
