@@ -690,8 +690,9 @@ $::LocationConfig
                     return
                 end
 
-                -- /test/follower/ws has cost 5, bucket has 10 tokens
-                -- First message should succeed (10-5=5)
+                -- /test/follower/ws: client_request_cost=5, backend_push_cost=80
+                -- Bucket starts at 170, each roundtrip costs 85 (5 send + 80 recv)
+                -- 1st roundtrip: 170 - 5 - 80 = 85 remaining
                 local ok, err = wb:send_text('{"msg":1}')
                 if not ok then
                     ngx.say("ERR:send1:", err)
@@ -703,7 +704,7 @@ $::LocationConfig
                     return
                 end
 
-                -- Second message should succeed (5-5=0)
+                -- 2nd roundtrip: 85 - 5 - 80 = 0 remaining
                 local ok, err = wb:send_text('{"msg":2}')
                 if not ok then
                     ngx.say("ERR:send2:", err)
@@ -715,7 +716,7 @@ $::LocationConfig
                     return
                 end
 
-                -- Third message should be rate limited (0 < 5)
+                -- 3rd send fails: 0 < 5 (client_request_cost)
                 local ok, err = wb:send_text('{"msg":3}')
                 if not ok then
                     ngx.say("ERR:send3:", err)
