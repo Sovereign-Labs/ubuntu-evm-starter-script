@@ -104,7 +104,7 @@ Only WebSocket connections are accepted. Actual WebSocket routing is tested in T
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
-GET /ledger/slots/latest/ws
+GET /test/follower/ws
 --- error_code: 426
 
 
@@ -613,7 +613,7 @@ PASS: exactly 2 succeeded, 3 rate limited
 
 
 === TEST 20: REST WebSocket endpoints route correctly via unified handler
-Tests that /ledger/slots/latest/ws WebSocket connections route to follower with per-message rate limiting.
+Tests that /test/follower/ws WebSocket connections route to follower with per-message rate limiting.
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval
 qq{
@@ -629,7 +629,7 @@ $::LocationConfig
                 end
 
                 -- Connect to REST WebSocket endpoint (routed through unified handler)
-                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/ledger/slots/latest/ws")
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/test/follower/ws")
                 if not ok then
                     ngx.say("ERR:connect:", err)
                     return
@@ -650,7 +650,7 @@ $::LocationConfig
                 end
 
                 wb:send_close()
-                -- Backend should be follower (per rest_methods config for /ledger/slots/latest/ws)
+                -- Backend should be follower (per rest_methods config for /test/follower/ws)
                 ngx.say(data)
             }
         }
@@ -684,13 +684,13 @@ $::LocationConfig
                     return
                 end
 
-                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/ledger/slots/latest/ws")
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/test/follower/ws")
                 if not ok then
                     ngx.say("ERR:connect:", err)
                     return
                 end
 
-                -- /ledger/slots/latest/ws has cost 5, bucket has 10 tokens
+                -- /test/follower/ws has cost 5, bucket has 10 tokens
                 -- First message should succeed (10-5=5)
                 local ok, err = wb:send_text('{"msg":1}')
                 if not ok then
@@ -860,7 +860,7 @@ $::LocationConfig
                 end
 
                 -- Connect to REST WebSocket endpoint (cost=5 per message)
-                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/ledger/slots/latest/ws")
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/test/follower/ws")
                 if not ok then
                     ngx.say("ERR:connect:", err)
                     return
