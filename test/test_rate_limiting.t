@@ -1053,7 +1053,7 @@ $::LocationConfig
 
                 -- Now go completely silent and wait for timeout
                 -- The proxy should timeout the connection after WS_TIMEOUT (2s)
-                -- We wait up to 5 seconds to receive a close frame or error
+                -- Client waits up to 10 seconds (timeout above) for close frame or error
                 local data2, typ2, err = wb:recv_frame()
 
                 -- We expect either:
