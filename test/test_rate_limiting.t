@@ -98,18 +98,14 @@ X-Backend: follower
 
 
 
-=== TEST 5: REST WebSocket endpoints accessible via HTTP route to follower
-HTTP GET (without WebSocket upgrade headers) tests the fallback to main proxy location.
-Actual WebSocket routing is tested in TEST 14-19.
+=== TEST 5: REST WebSocket endpoints reject non-WebSocket requests
+HTTP GET (without WebSocket upgrade headers) to /ws endpoints returns 426.
+Only WebSocket connections are accepted. Actual WebSocket routing is tested in TEST 14-19.
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
 GET /ledger/slots/latest/ws
---- response_body chomp
-{"backend":"follower"}
---- response_headers
-X-Backend: follower
---- error_code: 200
+--- error_code: 426
 
 
 
