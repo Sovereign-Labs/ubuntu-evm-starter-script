@@ -110,15 +110,17 @@ GET /ledger/slots/latest/ws
 
 
 === TEST 6: Path parameter pattern matching works
-/sequencer/txs/{txHash} should match dynamic path segments
+/test/param/{id} has cost=123 and routes to leader (vs default cost=80, follower).
+Verifies both routing and cost are correctly matched via pattern.
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
-GET /sequencer/txs/0x1234567890abcdef
+GET /test/param/abc123
 --- response_body chomp
-{"backend":"follower"}
+{"backend":"leader"}
 --- response_headers
-X-Backend: follower
+X-Backend: leader
+X-RateLimit-Remaining: 9877
 --- error_code: 200
 
 
