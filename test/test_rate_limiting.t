@@ -841,8 +841,11 @@ PASS: received 1 event then connection severed
 
 
 === TEST 23: REST WebSocket backend-to-client rate limiting
-Similar to TEST 22 but for REST WebSocket endpoints.
-Bucket needs: 5 (send) + 80 (recv) = 85 minimum to receive one message.
+Like TEST 22, but for REST WebSocket endpoints instead of JSON-RPC.
+Bucket: 90 tokens. /test/follower/ws: client_request_cost=5, backend_push_cost=80.
+1st roundtrip: 5 + 80 = 85 used, 5 remaining.
+2nd send: 5 used, 0 remaining.
+2nd recv: needs 80, has 0 -> rate limited -> connection severed.
 --- http_config eval
 my $config = $::HttpConfigBase;
 $config =~ s/(init_by_lua_block \{)/$1\n        BUCKET_CAPACITY = 90\n        REFILL_RATE = 0/;
@@ -860,52 +863,45 @@ $::LocationConfig
                     return
                 end
 
-                -- Connect to REST WebSocket endpoint (cost=5 per message)
                 local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/test/follower/ws")
                 if not ok then
                     ngx.say("ERR:connect:", err)
                     return
                 end
 
-                -- Send a message to trigger backend response stream
-                -- For this test, we'll simulate by sending test_subscribe which triggers streaming
-                local ok, err = wb:send_text('{"jsonrpc":"2.0","method":"test_subscribe","params":["newHeads"],"id":1}')
+                -- 1st roundtrip: 5 (send) + 80 (recv) = 85 used, 5 remaining
+                local ok, err = wb:send_text('{"msg":"hello1"}')
                 if not ok then
-                    ngx.say("ERR:send:", err)
+                    ngx.say("ERR:send1:", err)
+                    return
+                end
+                local data1, typ1, err = wb:recv_frame()
+                if not data1 or typ1 ~= "text" then
+                    ngx.say("ERR:recv1:", err or typ1)
                     return
                 end
 
-                -- Try to receive messages until connection closes
-                local messages = {}
-                for i = 1, 5 do
-                    local data, typ, err = wb:recv_frame()
-                    if not data then
-                        table.insert(messages, "recv_err:" .. (err or "nil"))
-                        break
-                    end
-                    if typ == "close" then
-                        table.insert(messages, "close_frame")
-                        break
-                    elseif typ == "text" then
-                        if data:match("Rate limit") then
-                            table.insert(messages, "rate_limited")
-                        else
-                            table.insert(messages, "msg")
-                        end
-                    end
+                -- 2nd send: 5 used, 0 remaining
+                local ok, err = wb:send_text('{"msg":"hello2"}')
+                if not ok then
+                    ngx.say("ERR:send2:", err)
+                    return
                 end
+
+                -- 2nd recv: backend responds but rate limit severs connection
+                local data2, typ2, err = wb:recv_frame()
 
                 wb:send_close()
 
-                -- With 50 token bucket and cost=5 per event, should get ~10 messages max
-                -- But mock backend sends 3 messages for eth_subscribe, so we need to check
-                -- that if we HAD more messages, connection would close
-                local result = table.concat(messages, ",")
-                -- For now, just verify we got messages and no errors
-                if result:match("msg") then
-                    ngx.say("PASS: received messages on REST WS")
+                -- Verify: first response succeeded, second was rate limited
+                local got_first = data1:match('"result"')
+                local got_close = typ2 == "close"
+                local got_error = not data2
+
+                if got_first and (got_close or got_error) then
+                    ngx.say("PASS: first response received, second rate limited")
                 else
-                    ngx.say("RESULT: " .. result)
+                    ngx.say("FAIL: data1=" .. tostring(data1) .. " typ2=" .. tostring(typ2) .. " data2=" .. tostring(data2))
                 end
             }
         }
@@ -913,7 +909,7 @@ $::LocationConfig
 --- request
 GET /test-rest-backend-rate-limit
 --- response_body
-PASS: received messages on REST WS
+PASS: first response received, second rate limited
 --- error_code: 200
 --- timeout: 5
 
