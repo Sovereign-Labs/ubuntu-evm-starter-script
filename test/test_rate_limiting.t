@@ -153,13 +153,20 @@ X-Backend: follower
 
 
 === TEST 9: Rate limiting returns 429 when bucket exhausted
+Tiny bucket (capacity=1) cannot satisfy /rollup/schema (cost=5).
+Verifies 429 response with correct headers and error body.
 --- http_config eval: $::HttpConfigTinyBucket
 --- config eval: $::LocationConfig
 --- request
 GET /rollup/schema
 --- error_code: 429
+--- response_headers
+X-RateLimit-Remaining: 1
+X-RateLimit-Cost: 5
 --- response_headers_like
 Retry-After: \d+
+--- response_body_like chomp
+"error":"Rate limit exceeded"
 
 
 
