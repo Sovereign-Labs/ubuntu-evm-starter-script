@@ -202,14 +202,6 @@ M.jsonrpc_methods = {
     ["debug_traceTransaction"] = { cost = 1000, use_leader = false },
     ["debug_traceBlockByNumber"] = { cost = 1000, use_leader = false },
     ["eth_gasPrice"] = { cost = 80, use_leader = false },
-
-    -- TEST METHODS (used by Test::Nginx suite)
-    ["test_leader_write"] = { cost = 80, use_leader = true },
-    ["test_follower_read"] = { cost = 80, use_leader = false },
-    ["test_subscribe"] = { cost = 5, use_leader = false },
-    ["test_leader_close"] = { cost = 80, use_leader = true },
-    ["test_follower_close"] = { cost = 80, use_leader = false },
-
     -- Default for unspecified methods
     default = { cost = 80, use_leader = false }
 }
