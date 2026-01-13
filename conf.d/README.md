@@ -27,10 +27,12 @@ The rate limiting setup uses OpenResty's Lua module to implement token bucket ra
 │  └── init_by_lua_block (load nginx-proxy-helpers.lua)           │
 ├─────────────────────────────────────────────────────────────────┤
 │  websocket-proxy.conf                                           │
-│  └── location ~ ^(/rpc|.*/ws)$                                  │
-│      └── content_by_lua_block → proxy.handle_websocket()        │
-│          ├── Main thread: client → backend                      │
-│          └── Spawned threads: backend → client (rate limited)   │
+│  ├── location = /rpc (HTTP or WebSocket)                        │
+│  │   ├── WebSocket → proxy.handle_websocket()                   │
+│  │   └── HTTP → rewrite to /_main_handler                       │
+│  └── location ~ .*/ws$ (WebSocket only)                         │
+│      ├── WebSocket → proxy.handle_websocket()                   │
+│      └── HTTP → 426 Upgrade Required                            │
 ├─────────────────────────────────────────────────────────────────┤
 │  proxy-location-rate-limited.conf                               │
 │  └── location /_main_handler                                    │
@@ -38,6 +40,16 @@ The rate limiting setup uses OpenResty's Lua module to implement token bucket ra
 │      └── content_by_lua_block → proxy.handle_http_request()     │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Endpoint Behavior
+
+| Endpoint | HTTP Request | WebSocket Request |
+|----------|--------------|-------------------|
+| `/rpc` | JSON-RPC via HTTP handler | WebSocket proxy |
+| `*.../ws` | 426 Upgrade Required | WebSocket proxy |
+
+The `/rpc` endpoint supports both HTTP (for single JSON-RPC calls) and WebSocket (for streaming).
+REST WebSocket endpoints (`/ws`) are WebSocket-only and reject plain HTTP requests.
 
 ### Rate Limiting
 
