@@ -498,7 +498,7 @@ $::LocationConfig
                     ngx.say("ERR:recv2:", err2, " (connection died after parse error)")
                     return
                 end
-                ngx.say("2: ", typ2, " ", data2:match('"result"') and "got result" or data2)
+                ngx.say("2: ", typ2, " ", data2:match('"result":"follower"') and "got follower result" or data2)
 
                 wb:send_close()
             }
@@ -508,7 +508,7 @@ $::LocationConfig
 GET /test-parse-error
 --- response_body
 1: text Invalid Request: Missing method
-2: text got result
+2: text got follower result
 --- error_code: 200
 --- timeout: 5
 
