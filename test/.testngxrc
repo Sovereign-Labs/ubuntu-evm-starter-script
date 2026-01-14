@@ -2,7 +2,8 @@
 # This tells Test::Nginx where to find the nginx/openresty binary
 
 # Use openresty instead of nginx
-export TEST_NGINX_BINARY=/usr/bin/openresty
+# Standard location for OpenResty Ubuntu package
+export TEST_NGINX_BINARY=/usr/local/openresty/bin/openresty
 
 # Set a custom server root in /tmp to avoid permission issues
 export TEST_NGINX_SERVROOT=/tmp/nginx_test_servroot

@@ -30,4 +30,4 @@ jobs:
       - name: Run tests
         run: |
           cd test
-          TEST_NGINX_BINARY=/usr/local/openresty/nginx/sbin/nginx prove test_rate_limiting.t
+          make test
