@@ -1,8 +1,0 @@
-2026/01/14 12:49:03 [notice] 2294089#2294089: using the "epoll" event method
-2026/01/14 12:49:03 [notice] 2294089#2294089: openresty/1.27.1.2
-2026/01/14 12:49:03 [notice] 2294089#2294089: OS: Linux 6.8.0-87-generic
-2026/01/14 12:49:03 [notice] 2294089#2294089: getrlimit(RLIMIT_NOFILE): 524288:524288
-2026/01/14 12:49:03 [notice] 2294090#2294090: *4 "websocket" matches "websocket", client: 127.0.0.1, server: localhost, request: "GET /rpc HTTP/1.1", host: "127.0.0.1:1984"
-2026/01/14 12:49:03 [notice] 2294090#2294090: signal 3 (SIGQUIT) received from 2288614, shutting down
-2026/01/14 12:49:03 [info] 2294090#2294090: epoll_wait() failed (4: Interrupted system call)
-2026/01/14 12:49:03 [notice] 2294090#2294090: gracefully shutting down

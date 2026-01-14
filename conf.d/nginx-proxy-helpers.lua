@@ -101,18 +101,18 @@ M.rest_endpoints = {
     ["/ledger/slots/latest/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
     ["/ledger/slots/finalized/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
 
-    -- LEDGER: BATCHES (worst case: children=1 returns all txs->events)
-    ["/ledger/batches/{batchId}"] = { cost = 1000, use_leader = false },
+    -- LEDGER: BATCHES (can contain many txs, each with events)
+    ["/ledger/batches/{batchId}"] = { cost = 3000, use_leader = false },
 
-    -- LEDGER: TRANSACTIONS (worst case: children=1 returns all events)
-    ["/ledger/txs"] = { cost = 255, use_leader = false },
-    ["/ledger/txs/{txId}"] = { cost = 255, use_leader = false },
+    -- LEDGER: TRANSACTIONS
+    ["/ledger/txs"] = { cost = 255, use_leader = false },        -- list query
+    ["/ledger/txs/{txId}"] = { cost = 80, use_leader = false },  -- single record
 
-    -- NESTED LOOKUPS (same worst case logic)
-    ["/ledger/slots/{slotId}/batches/{batchOffset}"] = { cost = 1000, use_leader = false },
-    ["/ledger/slots/{slotId}/batches/{batchOffset}/txs/{txOffset}"] = { cost = 255, use_leader = false },
+    -- NESTED LOOKUPS
+    ["/ledger/slots/{slotId}/batches/{batchOffset}"] = { cost = 3000, use_leader = false },
+    ["/ledger/slots/{slotId}/batches/{batchOffset}/txs/{txOffset}"] = { cost = 80, use_leader = false },
     ["/ledger/slots/{slotId}/batches/{batchOffset}/txs/{txOffset}/events/{eventOffset}"] = { cost = 80, use_leader = false },
-    ["/ledger/batches/{batchId}/txs/{txOffset}"] = { cost = 255, use_leader = false },
+    ["/ledger/batches/{batchId}/txs/{txOffset}"] = { cost = 80, use_leader = false },
     ["/ledger/batches/{batchId}/txs/{txOffset}/events/{eventOffset}"] = { cost = 80, use_leader = false },
     ["/ledger/txs/{txId}/events/{eventOffset}"] = { cost = 80, use_leader = false },
 
