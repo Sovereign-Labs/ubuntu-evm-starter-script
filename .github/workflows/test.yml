@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenResty
+        run: |
+          # Import GPG key
+          wget -qO - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          # Add repo
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list > /dev/null
+          # Install
+          sudo apt-get update
+          sudo apt-get install -y openresty
+
+      - name: Install Test::Nginx
+        run: |
+          sudo cpan -T Test::Nginx
+
+      - name: Run tests
+        run: |
+          cd test
+          TEST_NGINX_BINARY=/usr/local/openresty/nginx/sbin/nginx prove test_rate_limiting.t
