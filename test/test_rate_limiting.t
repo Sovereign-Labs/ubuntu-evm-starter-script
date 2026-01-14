@@ -922,7 +922,7 @@ Later writes should reconnect to leader.
 --- http_config eval
 my $config = $::HttpConfigBase;
 # Use short timeout (2 seconds) and high bucket (set globals before require)
-$config =~ s/(init_by_lua_block \{)/$1\n        WS_TIMEOUT = 2000\n        BUCKET_CAPACITY = 10000/;
+$config =~ s/(init_by_lua_block \{)/$1\n        WS_TIMEOUT_MS = 2000\n        BUCKET_CAPACITY = 10000/;
 return $config;
 --- config eval
 qq{
@@ -1018,7 +1018,7 @@ eventually timeout at the proxy level (not hang forever).
 --- http_config eval
 my $config = $::HttpConfigBase;
 # Use short timeout (2 seconds) and high bucket (set globals before require)
-$config =~ s/(init_by_lua_block \{)/$1\n        WS_TIMEOUT = 2000\n        BUCKET_CAPACITY = 10000/;
+$config =~ s/(init_by_lua_block \{)/$1\n        WS_TIMEOUT_MS = 2000\n        BUCKET_CAPACITY = 10000/;
 return $config;
 --- config eval
 qq{
@@ -1052,7 +1052,7 @@ $::LocationConfig
                 end
 
                 -- Now go completely silent and wait for timeout
-                -- The proxy should timeout the connection after WS_TIMEOUT (2s)
+                -- The proxy should timeout the connection after WS_TIMEOUT_MS (2s)
                 -- Client waits up to 10 seconds (timeout above) for close frame or error
                 local data2, typ2, err = wb:recv_frame()
 

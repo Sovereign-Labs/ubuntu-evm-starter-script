@@ -50,14 +50,14 @@ local ws_client = require "resty.websocket.client"
 --   BUCKET_CAPACITY = 100
 --   REFILL_RATE = 50
 --   proxy = require "nginx-proxy-helpers"
-M.WS_TIMEOUT = WS_TIMEOUT or 60000              -- WebSocket timeout (ms)
-M.WS_CLIENT_MAX_PAYLOAD = 20480   -- Max payload from client (20KB)
-M.WS_BACKEND_MAX_PAYLOAD = 1048576 -- Max payload from backend (1MB)
-M.BUCKET_TTL = 3600               -- Token bucket TTL (1 hour)
-M.BACKEND_REFRESH_INTERVAL = 0.2  -- Backend IP refresh interval (200ms)
-M.SPINLOCK_INITIAL_WAIT = 0.001   -- Initial spinlock wait (seconds)
-M.SPINLOCK_MAX_WAIT = 0.05        -- Max spinlock wait (seconds)
-M.SPINLOCK_MAX_ATTEMPTS = 10      -- Max spinlock attempts
+M.WS_TIMEOUT_MS = WS_TIMEOUT_MS or 60000         -- WebSocket timeout
+M.WS_CLIENT_MAX_PAYLOAD = 20480                  -- Max payload from client (20KB)
+M.WS_BACKEND_MAX_PAYLOAD = 1048576               -- Max payload from backend (1MB)
+M.BUCKET_TTL_SEC = 3600                          -- Token bucket TTL (1 hour)
+M.BACKEND_REFRESH_INTERVAL_SEC = 0.2             -- Backend IP refresh interval (200ms)
+M.SPINLOCK_INITIAL_WAIT_SEC = 0.001              -- Initial spinlock wait
+M.SPINLOCK_MAX_WAIT_SEC = 0.05                   -- Max spinlock wait
+M.SPINLOCK_MAX_ATTEMPTS = 10                     -- Max spinlock attempts
 
 -- Token bucket configuration
 M.BUCKET_CAPACITY = BUCKET_CAPACITY or 150  -- Maximum tokens
@@ -290,7 +290,7 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     -- Acquire lock using spinlock with exponential backoff.
     -- buckets:add() is atomic - only succeeds if key doesn't exist.
     local lock_acquired = false
-    local wait_time = M.SPINLOCK_INITIAL_WAIT
+    local wait_time = M.SPINLOCK_INITIAL_WAIT_SEC
     for attempt = 1, M.SPINLOCK_MAX_ATTEMPTS do
         local ok = buckets:add(lock_key, true, 1)
         if ok then
@@ -298,7 +298,7 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
             break
         end
         ngx.sleep(wait_time)
-        wait_time = math.min(wait_time * 2, M.SPINLOCK_MAX_WAIT)
+        wait_time = math.min(wait_time * 2, M.SPINLOCK_MAX_WAIT_SEC)
     end
 
     if not lock_acquired then
@@ -321,8 +321,8 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     local rate_limited = tokens < cost
     if not rate_limited then
         tokens = tokens - cost
-        buckets:set(bucket_key, tokens, M.BUCKET_TTL)
-        buckets:set(last_refill_key, current_time, M.BUCKET_TTL)
+        buckets:set(bucket_key, tokens, M.BUCKET_TTL_SEC)
+        buckets:set(last_refill_key, current_time, M.BUCKET_TTL_SEC)
     end
 
     -- Release lock
@@ -370,7 +370,7 @@ end
 -- Called at the start of WebSocket handling to complete the handshake.
 function M.create_client_websocket()
     local wb, err = ws_server:new{
-        timeout = M.WS_TIMEOUT,
+        timeout = M.WS_TIMEOUT_MS,
         max_payload_len = M.WS_CLIENT_MAX_PAYLOAD
     }
     return wb, err
@@ -431,7 +431,7 @@ end
 -- Returns: websocket handle on success, nil on failure
 function M.connect_backend(ctx, backend_entry, backend_name)
     local wb, err = ws_client:new{
-        timeout = M.WS_TIMEOUT,
+        timeout = M.WS_TIMEOUT_MS,
         max_payload_len = M.WS_BACKEND_MAX_PAYLOAD
     }
     if not wb then
