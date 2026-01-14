@@ -14,6 +14,9 @@ open(my $fh1, '<', $http_config_path) or die "Cannot open: $http_config_path: $!
 our $HttpConfigBase = do { local $/; <$fh1> };
 close($fh1);
 
+# Substitute placeholder with actual project directory
+$HttpConfigBase =~ s/__PROJECT_DIR__/$project_dir/g;
+
 # Location configs via include (uses same files as production)
 our $LocationConfig = qq{
     include $project_dir/conf.d/websocket-proxy.conf;

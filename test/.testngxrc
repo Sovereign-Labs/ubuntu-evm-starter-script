@@ -7,3 +7,6 @@ export TEST_NGINX_BINARY=/usr/local/openresty/bin/openresty
 
 # Set a custom server root in /tmp to avoid permission issues
 export TEST_NGINX_SERVROOT=/tmp/nginx_test_servroot
+
+# Set the repo root for Lua module path (works on any machine)
+export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
