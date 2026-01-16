@@ -94,7 +94,7 @@ cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
   hostname = "$INSTANCE_ID"
 
 [[inputs.nginx_vts]]
-  urls = ["http://127.0.0.1/vts_status/format/json"]
+  urls = ["http://127.0.0.1:8080/vts_status/format/json"]
 
 [[outputs.influxdb_v2]]
   urls = ["$MONITORING_URL"]
