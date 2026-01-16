@@ -49,9 +49,8 @@ rm -rf /tmp/openresty-${OPENRESTY_VERSION}*
 
 echo "Installing Telegraf..."
 
-curl -s https://repos.influxdata.com/influxdata-archive_compat.key | gpg --dearmor > /tmp/influxdata-archive_compat.gpg
-rpm --import /tmp/influxdata-archive_compat.gpg
-rm -f /tmp/influxdata-archive_compat.gpg
+# Import GPG key directly (rpm handles ASCII-armored keys)
+rpm --import https://repos.influxdata.com/influxdata-archive_compat.key
 
 cat <<EOF | tee /etc/yum.repos.d/influxdata.repo
 [influxdata]
