@@ -8,10 +8,11 @@ INFLUX_TOKEN="$2"
 INFLUX_ORG="$3"
 INFLUX_BUCKET="$4"
 INSTANCE_ID="$5"
+STACK_NAME="$6"
 
 # Validate required parameters
-if [ -z "$MONITORING_URL" ] || [ -z "$INFLUX_TOKEN" ] || [ -z "$INFLUX_ORG" ] || [ -z "$INFLUX_BUCKET" ] || [ -z "$INSTANCE_ID" ]; then
-  echo "Usage: $0 <MONITORING_URL> <INFLUX_TOKEN> <INFLUX_ORG> <INFLUX_BUCKET> <INSTANCE_ID>"
+if [ -z "$MONITORING_URL" ] || [ -z "$INFLUX_TOKEN" ] || [ -z "$INFLUX_ORG" ] || [ -z "$INFLUX_BUCKET" ] || [ -z "$INSTANCE_ID" ] || [ -z "$STACK_NAME" ]; then
+  echo "Usage: $0 <MONITORING_URL> <INFLUX_TOKEN> <INFLUX_ORG> <INFLUX_BUCKET> <INSTANCE_ID> <STACK_NAME>"
   echo "ERROR: Missing required monitoring parameters"
   exit 1
 fi
@@ -89,6 +90,9 @@ yum install -y telegraf
 echo "Configuring Telegraf for nginx-vts metrics..."
 
 cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
+[global_tags]
+  stack = "$STACK_NAME"
+
 [agent]
   interval = "10s"
   hostname = "$INSTANCE_ID"
