@@ -47,6 +47,30 @@ make install
 cd /
 rm -rf /tmp/openresty-${OPENRESTY_VERSION}*
 
+# Create systemd service file for OpenResty (not included when building from source)
+cat > /etc/systemd/system/openresty.service << 'SYSTEMD_EOF'
+[Unit]
+Description=The OpenResty Application Platform
+After=syslog.target network-online.target remote-fs.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/usr/local/openresty/nginx/logs/nginx.pid
+ExecStartPre=/usr/local/openresty/nginx/sbin/nginx -t
+ExecStart=/usr/local/openresty/nginx/sbin/nginx
+ExecStartPost=/bin/sleep 1
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s QUIT $MAINPID
+RuntimeDirectory=openresty
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD_EOF
+
+systemctl daemon-reload
+
 echo "Installing Telegraf..."
 
 # Import InfluxData GPG key (exp2029 key for current packages)
