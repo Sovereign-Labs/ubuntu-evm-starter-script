@@ -91,7 +91,8 @@ echo "Configuring Telegraf for nginx-vts metrics..."
 
 cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
 [global_tags]
-  deployment = "$DEPLOYMENT_NAME"
+  deployment_name = "$DEPLOYMENT_NAME"
+  environment = "sov-aws-dev"
 
 [agent]
   interval = "10s"
@@ -105,6 +106,20 @@ cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
   token = "$INFLUX_TOKEN"
   organization = "$INFLUX_ORG"
   bucket = "$INFLUX_BUCKET"
+
+# Basic
+[[inputs.cpu]]
+  percpu = true
+  totalcpu = true
+  collect_cpu_time = false
+  report_active = falsecore_tags = false
+[[inputs.mem]]
+
+# Storage
+[[inputs.disk]]
+  ignore_fs = ["tmpfs", "devtmpfs", "devfs", "iso9660", "overlay", "aufs", "squashfs", "nsfs", "efivarfs"]
+[[inputs.diskio]]
+
 TELEGRAF_EOF
 
 systemctl enable telegraf
