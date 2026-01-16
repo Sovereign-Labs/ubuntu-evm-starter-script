@@ -49,8 +49,8 @@ rm -rf /tmp/openresty-${OPENRESTY_VERSION}*
 
 echo "Installing Telegraf..."
 
-# Import GPG key directly (rpm handles ASCII-armored keys)
-rpm --import https://repos.influxdata.com/influxdata-archive_compat.key
+# Import InfluxData GPG key (exp2029 key for current packages)
+rpm --import https://repos.influxdata.com/influxdata-archive_compat-exp2029.key
 
 cat <<EOF | tee /etc/yum.repos.d/influxdata.repo
 [influxdata]
@@ -58,7 +58,7 @@ name = InfluxData Repository - Stable
 baseurl = https://repos.influxdata.com/stable/\$basearch/main
 enabled = 1
 gpgcheck = 1
-gpgkey = https://repos.influxdata.com/influxdata-archive_compat.key
+gpgkey = https://repos.influxdata.com/influxdata-archive_compat-exp2029.key
 EOF
 yum install -y telegraf
 
