@@ -19,7 +19,8 @@ fi
 echo "Building OpenResty with nginx-vts module..."
 
 yum groupinstall -y "Development Tools"
-yum install -y pcre-devel openssl-devel zlib-devel perl perl-Data-Dumper git wget
+# Use openssl11-devel for OpenSSL 1.1 (required by OpenResty 1.27+)
+yum install -y pcre-devel openssl11-devel zlib-devel perl perl-Data-Dumper git wget
 
 cd /tmp
 OPENRESTY_VERSION="1.27.1.2"
@@ -29,12 +30,15 @@ cd openresty-${OPENRESTY_VERSION}
 
 git clone --depth 1 https://github.com/vozlt/nginx-module-vts.git
 
+# Configure with OpenSSL 1.1 paths (Amazon Linux 2)
 ./configure \
   --prefix=/usr/local/openresty \
   --with-http_v2_module \
   --with-http_realip_module \
   --with-http_gzip_static_module \
   --with-http_stub_status_module \
+  --with-cc-opt="-I/usr/include/openssl11" \
+  --with-ld-opt="-L/usr/lib64/openssl11 -Wl,-rpath,/usr/lib64/openssl11" \
   --add-module=./nginx-module-vts
 
 make -j$(nproc)
