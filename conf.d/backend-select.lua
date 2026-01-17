@@ -11,6 +11,9 @@ function _M.select(path)
     -- Route /sequencer/txs POSTs to leader
     if path == "/sequencer/txs" and method == "POST" then
         use_leader = true
+    -- Route /sequencer/ready to leader (health check for leader node)
+    elseif path == "/sequencer/ready" and method == "GET" then
+        use_leader = true
     -- Route WebSocket connections to leader for consistency
     elseif is_websocket then
         use_leader = true
