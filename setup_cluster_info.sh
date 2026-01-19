@@ -1,3 +1,7 @@
+#!/bin/bash
+
+set -e
+
 ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
 ROLLUP_STARTER_BRANCH="blaze/proxy-utils"
 ROLLUP_STARTER_DIR="/tmp/rollup-starter"
