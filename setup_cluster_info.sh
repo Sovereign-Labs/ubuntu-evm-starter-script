@@ -26,8 +26,11 @@ if ! command -v cargo >/dev/null 2>&1; then
   source "$HOME/.cargo/env"
 fi
 
+
+yum install -y gcc gcc-c++
 if [ ! -d "${ROLLUP_STARTER_DIR}/.git" ]; then
   echo "Cloning rollup-starter repo..."
+  echo "Checking for git... $BRANCH_NAME"
   git clone "${ROLLUP_STARTER_REPO}" "${ROLLUP_STARTER_DIR}"
 fi
 
