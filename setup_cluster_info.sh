@@ -37,6 +37,8 @@ yum install -y gcc gcc-c++
 if [ ! -d "${ROLLUP_STARTER_DIR}/.git" ]; then
   echo "Cloning rollup-starter repo..."
   echo "Checking for git... $BRANCH_NAME"
+  echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
+
   git clone "${ROLLUP_STARTER_REPO}" "${ROLLUP_STARTER_DIR}"
 fi
 
