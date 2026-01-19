@@ -21,7 +21,6 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 yum install -y gcc gcc-c++
-
 echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
 
 
