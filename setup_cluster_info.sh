@@ -4,9 +4,11 @@ set -e
 
 BRANCH_NAME="$1"
 DB_SECRET_ARN="$2"
-DB_HOST="$3"
-DB_PORT="$4"
-DB_NAME="$5"
+REGION="$3"
+DB_HOST="$4"
+DB_PORT="$5"
+DB_NAME="$6"
+
 
 ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
 ROLLUP_STARTER_DIR="/tmp/rollup-starter"
@@ -23,6 +25,28 @@ fi
 yum install -y gcc gcc-c++
 echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
 
+if ! command -v aws >/dev/null 2>&1; then
+  yum install -y awscli
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  yum install -y jq
+fi
+
+if [ -z "$DB_SECRET_ARN" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_NAME" ]; then
+  echo "Error: Missing database parameters. Need DB_SECRET_ARN, DB_HOST, DB_PORT, DB_NAME."
+  exit 1
+fi
+
+echo "Retrieving database credentials..."
+SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --region "$REGION" --query SecretString --output text)
+DB_USERNAME=$(echo "$SECRET_JSON" | jq -r .username)
+DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r .password)
+
+DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
+export DATABASE_URL
+echo "Database connection string constructed"
+
 
 if ! command -v cargo >/dev/null 2>&1; then
   # Install Rust toolchain for building proxy binary
@@ -35,8 +59,8 @@ fi
 yum install -y gcc gcc-c++
 if [ ! -d "${ROLLUP_STARTER_DIR}/.git" ]; then
   echo "Cloning rollup-starter repo..."
-  echo "Checking for git... $BRANCH_NAME"
-  echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
+  echo "Checking for git... $BRANCH_NAME $DATABASE_URL"
+  echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME $DATABASE_URL" 
 
   git clone "${ROLLUP_STARTER_REPO}" "${ROLLUP_STARTER_DIR}"
 fi
