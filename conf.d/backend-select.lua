@@ -1,5 +1,37 @@
 local _M = {}
 
+-- Handle mock responses for certain RPC methods
+-- Returns true if the request was handled (response sent), false otherwise
+function _M.handle_mock_responses(path)
+    local method = ngx.var.request_method
+
+    if path == "/rpc" and method == "POST" then
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+
+        if body then
+            local rpc_method = body:match('"method"%s*:%s*"([^"]+)"')
+
+            if rpc_method == "eth_maxPriorityFeePerGas" then
+                -- Extract the request ID (can be number or string)
+                local id = body:match('"id"%s*:%s*(%d+)') or body:match('"id"%s*:%s*"([^"]+)"')
+
+                -- If ID was a string match, wrap it in quotes for the response
+                local id_value = id
+                if body:match('"id"%s*:%s*"') then
+                    id_value = '"' .. id .. '"'
+                end
+
+                ngx.header.content_type = "application/json"
+                ngx.say('{"jsonrpc":"2.0","id":' .. (id_value or "null") .. ',"result":"0x0"}')
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 function _M.select(path)
     local method = ngx.var.request_method
     local backend_cache = ngx.shared.backend_cache
