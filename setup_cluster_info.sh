@@ -18,6 +18,7 @@ fi
 
 yum install -y gcc gcc-c++
 
+echo "Checking for git... $BRANCH_NAME"
 if ! command -v cargo >/dev/null 2>&1; then
   # Install Rust toolchain for building proxy binary
   echo "Installing Rust toolchain..."
