@@ -10,6 +10,7 @@ PROXY_CRATE_MANIFEST="${ROLLUP_STARTER_DIR}/crates/utils/proxy/Cargo.toml"
 
 echo "Checking for git... $BRANCH_NAME"
 
+export HOME=/root
 if ! command -v git >/dev/null 2>&1; then
    echo "Installing git..."
    yum install -y git
