@@ -16,6 +16,8 @@ if ! command -v git >/dev/null 2>&1; then
    yum install -y git
 fi
 
+yum install -y gcc gcc-c++
+
 if ! command -v cargo >/dev/null 2>&1; then
   # Install Rust toolchain for building proxy binary
   echo "Installing Rust toolchain..."
