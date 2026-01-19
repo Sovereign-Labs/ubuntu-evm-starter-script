@@ -3,6 +3,10 @@
 set -e
 
 BRANCH_NAME="$1"
+DB_SECRET_ARN="$2"
+DB_HOST="$3"
+DB_PORT="$4"
+DB_NAME="$5"
 
 ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
 ROLLUP_STARTER_DIR="/tmp/rollup-starter"
@@ -18,7 +22,9 @@ fi
 
 yum install -y gcc gcc-c++
 
-echo "Checking for git... $BRANCH_NAME"
+echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
+
+
 if ! command -v cargo >/dev/null 2>&1; then
   # Install Rust toolchain for building proxy binary
   echo "Installing Rust toolchain..."
