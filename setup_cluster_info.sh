@@ -2,12 +2,13 @@
 
 set -e
 
-ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
-ROLLUP_STARTER_BRANCH="blaze/proxy-utils"
+BRANCH_NAME="$1"
 
+ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
 ROLLUP_STARTER_DIR="/tmp/rollup-starter"
 PROXY_CRATE_MANIFEST="${ROLLUP_STARTER_DIR}/crates/utils/proxy/Cargo.toml"
 
+echo "Checking for git... $BRANCH_NAME"
 
 if ! command -v git >/dev/null 2>&1; then
    echo "Installing git..."
@@ -28,7 +29,7 @@ fi
 
 
 git -C "${ROLLUP_STARTER_DIR}" fetch origin "${ROLLUP_STARTER_BRANCH}"
-git -C "${ROLLUP_STARTER_DIR}" checkout "${ROLLUP_STARTER_BRANCH}"
+git -C "${ROLLUP_STARTER_DIR}" checkout "${BRANCH_NAME}"
 
 echo "Building cluster info binary..."
 cargo build --release --manifest-path "${PROXY_CRATE_MANIFEST}"
