@@ -74,3 +74,31 @@ cargo build --release --manifest-path "${PROXY_CRATE_MANIFEST}"
 
 echo "Installing binary to /usr/local/bin..."
 cp "${ROLLUP_STARTER_DIR}/target/release/proxy" /usr/local/bin/
+
+echo "Creating systemd service for ClusterInfo...."
+cat > /etc/systemd/system/proxy.service << EOF
+[Unit]
+Description=ClusterInfo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/proxy --database_url "${DATABASE_URL}" --output_file /usr/local/openresty/nginx/conf/cluster_info.txt
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable proxy
+systemctl start proxy
+
+if ! systemctl is-active --quiet proxy; then
+  echo "ERROR: Cluster info failed to start"
+  exit 1
+fi
+
+echo "ClusterInfo service installed and running"
