@@ -84,7 +84,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/proxy --database_url "${DATABASE_URL}" --output_file /usr/local/openresty/nginx/conf/cluster_info.txt
+ExecStart=/usr/local/bin/proxy --database-url "${DATABASE_URL}" --output-file /usr/local/openresty/nginx/conf/cluster_info.txt
 Restart=always
 RestartSec=5
 
