@@ -71,3 +71,6 @@ git -C "${ROLLUP_STARTER_DIR}" checkout "${BRANCH_NAME}"
 
 echo "Building cluster info binary..."
 cargo build --release --manifest-path "${PROXY_CRATE_MANIFEST}"
+
+echo "Installing binary to /usr/local/bin..."
+cp "${ROLLUP_STARTER_DIR}/target/release/proxy" /usr/local/bin/
