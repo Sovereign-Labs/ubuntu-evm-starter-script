@@ -10,13 +10,13 @@ DB_PORT="$5"
 DB_NAME="$6"
 
 
+export HOME=/root
+
 ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
-ROLLUP_STARTER_DIR="/tmp/rollup-starter"
+ROLLUP_STARTER_DIR="$HOME/rollup-starter"
 PROXY_CRATE_MANIFEST="${ROLLUP_STARTER_DIR}/crates/utils/proxy/Cargo.toml"
 
 echo "Checking for git... $BRANCH_NAME"
-
-export HOME=/root
 if ! command -v git >/dev/null 2>&1; then
    echo "Installing git..."
    yum install -y git
