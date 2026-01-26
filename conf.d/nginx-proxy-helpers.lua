@@ -507,8 +507,8 @@ local function handle_jsonrpc_message(ctx, data, typ)
     end
 
     local method_config = M.jsonrpc_methods[method] or M.jsonrpc_methods.default
-    local cost = method_config and method_config.cost or M.SUBSCRIBE_COST
-    local use_leader = method_config and method_config.use_leader or false
+    local cost = method_config.cost
+    local use_leader = method_config.use_leader
 
     local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, cost, ctx.is_exempt)
     if not ok then
