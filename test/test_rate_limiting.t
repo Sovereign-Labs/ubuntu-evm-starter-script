@@ -581,7 +581,173 @@ GET /test-invalid-utf8
 
 
 
-=== TEST 20: Rate limiting is atomic under concurrent requests
+=== TEST 20: Error responses echo back numeric request ID
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-error-id-numeric {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 2000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send request with numeric ID but missing method
+                local ok, err = wb:send_text('{"jsonrpc":"2.0","params":[],"id":42}')
+                if not ok then
+                    ngx.say("ERR:send:", err)
+                    return
+                end
+
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    ngx.say("ERR:recv:", err)
+                    return
+                end
+
+                -- Verify error response has id:42 (not id:null)
+                local id = data:match('"id":(%d+)')
+                if id == "42" then
+                    ngx.say("PASS: error response has id:42")
+                else
+                    ngx.say("FAIL: " .. data)
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-error-id-numeric
+--- response_body
+PASS: error response has id:42
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 21: Error responses echo back string request ID
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-error-id-string {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 2000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send request with string ID but missing method
+                local ok, err = wb:send_text('{"jsonrpc":"2.0","params":[],"id":"req-abc-123"}')
+                if not ok then
+                    ngx.say("ERR:send:", err)
+                    return
+                end
+
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    ngx.say("ERR:recv:", err)
+                    return
+                end
+
+                -- Verify error response has id:"req-abc-123"
+                local id = data:match('"id":"([^"]+)"')
+                if id == "req-abc-123" then
+                    ngx.say("PASS: error response has id:req-abc-123")
+                else
+                    ngx.say("FAIL: " .. data)
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-error-id-string
+--- response_body
+PASS: error response has id:req-abc-123
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 22: Rate limit error echoes back request ID
+--- http_config eval: $::HttpConfigTinyBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-rate-limit-id {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 2000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send request that will be rate limited (tiny bucket)
+                local ok, err = wb:send_text('{"jsonrpc":"2.0","method":"test_subscribe","params":[],"id":999}')
+                if not ok then
+                    ngx.say("ERR:send:", err)
+                    return
+                end
+
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    ngx.say("ERR:recv:", err)
+                    return
+                end
+
+                -- Verify rate limit error has id:999
+                local has_rate_limit = data:match('"Rate limit exceeded"')
+                local id = data:match('"id":(%d+)')
+                if has_rate_limit and id == "999" then
+                    ngx.say("PASS: rate limit error has id:999")
+                else
+                    ngx.say("FAIL: " .. data)
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-rate-limit-id
+--- response_body
+PASS: rate limit error has id:999
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 23: Rate limiting is atomic under concurrent requests
 --- http_config eval
 # Bucket: 10 tokens, 0 refill (so we can test exact consumption)
 my $config = $::HttpConfigBase;
@@ -679,7 +845,7 @@ PASS: exactly 2 succeeded, 3 rate limited
 
 
 
-=== TEST 21: REST WebSocket endpoints route correctly via unified handler
+=== TEST 24: REST WebSocket endpoints route correctly via unified handler
 Tests that /test/follower/ws WebSocket connections route to follower with per-message rate limiting.
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval
@@ -731,7 +897,7 @@ GET /test-rest-ws
 
 
 
-=== TEST 22: REST WebSocket per-message rate limiting
+=== TEST 25: REST WebSocket per-message rate limiting
 Each message on REST WebSocket costs tokens (per-message, not just per-connection).
 Bucket needs to allow 2 roundtrips: 2*(5 send + 80 recv) = 170, then 3rd send fails.
 --- http_config eval
@@ -822,7 +988,7 @@ PASS: first 2 messages succeeded, third rate limited
 
 
 
-=== TEST 23: Backend-to-client rate limiting severs connection
+=== TEST 26: Backend-to-client rate limiting severs connection
 When pushed events exceed rate limit, connection should be closed.
 Bucket: 90 tokens, no refill. test_subscribe=5, each event=80.
 After subscribe(5) + 1 event(80) = 85 used, 5 remaining.
@@ -907,7 +1073,7 @@ PASS: received 1 event then connection severed
 
 
 
-=== TEST 24: REST WebSocket backend-to-client rate limiting
+=== TEST 27: REST WebSocket backend-to-client rate limiting
 Like TEST 22, but for REST WebSocket endpoints instead of JSON-RPC.
 Bucket: 90 tokens. /test/follower/ws: client_request_cost=5, backend_push_cost=80.
 1st roundtrip: 5 + 80 = 85 used, 5 remaining.
@@ -982,7 +1148,7 @@ PASS: first response received, second rate limited
 
 
 
-=== TEST 25: Inactive backend timeout does not affect active connections
+=== TEST 28: Inactive backend timeout does not affect active connections
 When only reads are sent (follower active), the leader connection may timeout.
 But client-to-proxy and proxy-to-follower should stay alive.
 Later writes should reconnect to leader.
@@ -1079,7 +1245,7 @@ PASS: inactive backend timeout handled correctly
 
 
 
-=== TEST 26: Complete inactivity causes proxy-level timeout
+=== TEST 29: Complete inactivity causes proxy-level timeout
 When there is no activity from client or backend, the connection should
 eventually timeout at the proxy level (not hang forever).
 --- http_config eval
@@ -1147,7 +1313,7 @@ PASS: (received close frame|connection closed).*
 
 
 
-=== TEST 27: Single backend mode uses one connection for all traffic
+=== TEST 30: Single backend mode uses one connection for all traffic
 When leader and follower have the same address, only one WebSocket connection
 should be made. We verify this by checking that reads (normally follower)
 return "leader" responses, proving they go through the shared leader connection.

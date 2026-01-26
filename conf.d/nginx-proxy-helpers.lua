@@ -496,9 +496,13 @@ local function handle_jsonrpc_message(ctx, data, typ)
         text_data = data
     end
 
+    -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
+    local id = text_data:match('"id"%s*:%s*(%d+)') or
+               text_data:match('"id"%s*:%s*(".-")') or "null"
+
     local method = text_data:match('"method"%s*:%s*"([^"]+)"')
     if not method then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":null}')
+        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
         return true  -- continue
     end
 
@@ -509,16 +513,16 @@ local function handle_jsonrpc_message(ctx, data, typ)
     local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, cost, ctx.is_exempt)
     if not ok then
         if err_type == "busy" then
-            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":null}')
+            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. id .. '}')
         else
-            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. method .. '"}},"id":null}')
+            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. method .. '"}},"id":' .. id .. '}')
         end
         return true  -- continue
     end
 
     local backend_wb, backend_name = M.get_backend(ctx, use_leader)
     if not backend_wb then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend unavailable"},"id":null}')
+        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend unavailable"},"id":' .. id .. '}')
         return false  -- break
     end
 
@@ -529,7 +533,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
         send_ok, send_err = backend_wb:send_binary(data)
     end
     if not send_ok then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend send failed"},"id":null}')
+        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend send failed"},"id":' .. id .. '}')
     end
 
     return true  -- continue
