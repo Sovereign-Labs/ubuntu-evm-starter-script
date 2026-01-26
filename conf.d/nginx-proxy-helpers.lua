@@ -310,10 +310,13 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     local last_refill = buckets:get(last_refill_key) or current_time
 
     if not tokens then
+        -- First request from this IP: initialize with full bucket
         tokens = M.BUCKET_CAPACITY
     else
+        -- Calculate tokens earned since last refill
         local elapsed = current_time - last_refill
         local new_tokens = elapsed * M.REFILL_RATE
+        -- Add earned tokens, but don't exceed bucket capacity
         tokens = math.min(M.BUCKET_CAPACITY, tokens + new_tokens)
     end
 
@@ -483,13 +486,9 @@ local function handle_jsonrpc_message(ctx, data, typ)
     local text_data = data
 
     if typ == "binary" then
-        local valid_utf8 = true
-        for p, c in utf8.codes(data) do
-            if c == nil then
-                valid_utf8 = false
-                break
-            end
-        end
+        local valid_utf8 = pcall(function()
+            for p, c in utf8.codes(data) do end
+        end)
         if not valid_utf8 then
             ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Binary frame must contain valid UTF-8"},"id":null}')
             return true  -- continue

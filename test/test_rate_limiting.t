@@ -517,7 +517,71 @@ GET /test-parse-error
 
 
 
-=== TEST 19: Rate limiting is atomic under concurrent requests
+=== TEST 19: Binary frame with invalid UTF-8 returns parse error
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-invalid-utf8 {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 2000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send binary frame with invalid UTF-8 bytes (0xFF is never valid in UTF-8)
+                local ok, err = wb:send_binary("\\xFF\\xFE invalid utf8")
+                if not ok then
+                    ngx.say("ERR:send1:", err)
+                    return
+                end
+
+                -- Should get parse error response
+                local data, typ, err = wb:recv_frame()
+                if not data then
+                    ngx.say("ERR:recv1:", err)
+                    return
+                end
+                ngx.say("1: ", typ, " ", data:match('"message":"([^"]+)"') or data)
+
+                -- Connection should still be alive - send a valid text message
+                local ok, err = wb:send_text('{"jsonrpc":"2.0","method":"test_follower_read","id":2}')
+                if not ok then
+                    ngx.say("ERR:send2:", err)
+                    return
+                end
+
+                local data2, typ2, err2 = wb:recv_frame()
+                if not data2 then
+                    ngx.say("ERR:recv2:", err2, " (connection died after invalid UTF-8)")
+                    return
+                end
+                ngx.say("2: ", typ2, " ", data2:match('"result":"follower"') and "got follower result" or data2)
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-invalid-utf8
+--- response_body
+1: text Parse error: Binary frame must contain valid UTF-8
+2: text got follower result
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 20: Rate limiting is atomic under concurrent requests
 --- http_config eval
 # Bucket: 10 tokens, 0 refill (so we can test exact consumption)
 my $config = $::HttpConfigBase;
@@ -615,7 +679,7 @@ PASS: exactly 2 succeeded, 3 rate limited
 
 
 
-=== TEST 20: REST WebSocket endpoints route correctly via unified handler
+=== TEST 21: REST WebSocket endpoints route correctly via unified handler
 Tests that /test/follower/ws WebSocket connections route to follower with per-message rate limiting.
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval
@@ -667,7 +731,7 @@ GET /test-rest-ws
 
 
 
-=== TEST 21: REST WebSocket per-message rate limiting
+=== TEST 22: REST WebSocket per-message rate limiting
 Each message on REST WebSocket costs tokens (per-message, not just per-connection).
 Bucket needs to allow 2 roundtrips: 2*(5 send + 80 recv) = 170, then 3rd send fails.
 --- http_config eval
@@ -758,7 +822,7 @@ PASS: first 2 messages succeeded, third rate limited
 
 
 
-=== TEST 22: Backend-to-client rate limiting severs connection
+=== TEST 23: Backend-to-client rate limiting severs connection
 When pushed events exceed rate limit, connection should be closed.
 Bucket: 90 tokens, no refill. test_subscribe=5, each event=80.
 After subscribe(5) + 1 event(80) = 85 used, 5 remaining.
@@ -843,7 +907,7 @@ PASS: received 1 event then connection severed
 
 
 
-=== TEST 23: REST WebSocket backend-to-client rate limiting
+=== TEST 24: REST WebSocket backend-to-client rate limiting
 Like TEST 22, but for REST WebSocket endpoints instead of JSON-RPC.
 Bucket: 90 tokens. /test/follower/ws: client_request_cost=5, backend_push_cost=80.
 1st roundtrip: 5 + 80 = 85 used, 5 remaining.
@@ -918,7 +982,7 @@ PASS: first response received, second rate limited
 
 
 
-=== TEST 24: Inactive backend timeout does not affect active connections
+=== TEST 25: Inactive backend timeout does not affect active connections
 When only reads are sent (follower active), the leader connection may timeout.
 But client-to-proxy and proxy-to-follower should stay alive.
 Later writes should reconnect to leader.
@@ -1015,7 +1079,7 @@ PASS: inactive backend timeout handled correctly
 
 
 
-=== TEST 25: Complete inactivity causes proxy-level timeout
+=== TEST 26: Complete inactivity causes proxy-level timeout
 When there is no activity from client or backend, the connection should
 eventually timeout at the proxy level (not hang forever).
 --- http_config eval
@@ -1083,7 +1147,7 @@ PASS: (received close frame|connection closed).*
 
 
 
-=== TEST 26: Single backend mode uses one connection for all traffic
+=== TEST 27: Single backend mode uses one connection for all traffic
 When leader and follower have the same address, only one WebSocket connection
 should be made. We verify this by checking that reads (normally follower)
 return "leader" responses, proving they go through the shared leader connection.
