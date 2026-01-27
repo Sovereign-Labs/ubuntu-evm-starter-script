@@ -554,13 +554,10 @@ local function handle_rest_ws_message(ctx, data, typ)
         return true  -- continue
     end
 
-    -- Reconnect to backend if disconnected
-    if not ctx.endpoint_backend_wb or not ctx.backends[ctx.endpoint_backend_name].wb then
-        ctx.endpoint_backend_wb, ctx.endpoint_backend_name = M.get_backend(ctx, ctx.endpoint_use_leader)
-        if not ctx.endpoint_backend_wb then
-            ctx.client_wb:send_text('{"error":"Backend unavailable"}')
-            return false  -- break
-        end
+    ctx.endpoint_backend_wb, ctx.endpoint_backend_name = M.get_backend(ctx, ctx.endpoint_use_leader)
+    if not ctx.endpoint_backend_wb then
+        ctx.client_wb:send_text('{"error":"Backend unavailable"}')
+        return false  -- break
     end
 
     local send_ok, send_err
