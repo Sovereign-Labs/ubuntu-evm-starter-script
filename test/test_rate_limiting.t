@@ -173,7 +173,7 @@ Retry-After: \d+
 
 
 
-=== TEST 10: Rate limit error includes method name for RPC requests
+=== TEST 10: Rate limit error uses JSON-RPC format for RPC requests
 --- http_config eval: $::HttpConfigTinyBucket
 --- config eval: $::LocationConfig
 --- request
@@ -181,7 +181,7 @@ POST /rpc
 {"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
 --- error_code: 429
 --- response_body_like chomp
-"method":"test_follower_read"
+\{"jsonrpc":"2.0","error":\{"code":-32000,"message":"Rate limit exceeded","data":\{"cost":\d+,"remaining":\d+,"method":"test_follower_read"\}\},"id":1\}
 
 
 
@@ -1392,3 +1392,52 @@ GET /test-single-backend
 PASS: single backend - read returned leader (not follower)
 --- error_code: 200
 --- timeout: 10
+
+
+
+=== TEST 31: HTTP JSON-RPC with empty body returns -32700 Parse error
+POST /rpc with no body should return proper JSON-RPC error.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /rpc
+--- error_code: 400
+--- response_body
+{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}
+
+
+
+=== TEST 32: HTTP JSON-RPC with missing method returns -32600 Invalid Request
+POST /rpc with JSON body but no method field should return proper JSON-RPC error.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /rpc
+{"jsonrpc":"2.0","id":42}
+--- error_code: 400
+--- response_body
+{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":42}
+
+
+
+=== TEST 33: HTTP JSON-RPC missing method with string ID echoes ID correctly
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /rpc
+{"jsonrpc":"2.0","params":[],"id":"req-abc-123"}
+--- error_code: 400
+--- response_body
+{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":"req-abc-123"}
+
+
+
+=== TEST 34: HTTP JSON-RPC missing method with no ID returns id:null
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /rpc
+{"jsonrpc":"2.0","params":[]}
+--- error_code: 400
+--- response_body
+{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":null}

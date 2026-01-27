@@ -236,30 +236,6 @@ function M.find_rest_config(path)
     return M.rest_endpoints.default
 end
 
--- Get request configuration for a given URI.
--- For HTTP endpoints: returns cost, use_leader, nil
--- For WS endpoints: returns client_request_cost, backend_push_cost, use_leader
--- For JSON-RPC: returns cost, use_leader, method_name
-function M.get_request_config(uri, http_method, body)
-    if uri == "/rpc" and http_method == "POST" and body then
-        local method = body:match('"method"%s*:%s*"([^"]+)"')
-        if method then
-            local cfg = M.jsonrpc_methods[method] or M.jsonrpc_methods.default
-            return cfg.cost, cfg.use_leader, method
-        end
-    end
-
-    local cfg = M.find_rest_config(uri)
-
-    -- WebSocket endpoints use new field names
-    if cfg.client_request_cost ~= nil then
-        return cfg.client_request_cost, cfg.backend_push_cost, cfg.use_leader
-    end
-
-    -- HTTP endpoints use cost
-    return cfg.cost, cfg.use_leader, nil
-end
-
 -- ============================================================================
 -- RATE LIMITING
 -- ============================================================================
@@ -588,7 +564,7 @@ local function client_to_backend(ctx)
         ctx.endpoint_backend_wb, ctx.endpoint_backend_name = M.get_backend(ctx, ctx.endpoint_use_leader)
         if not ctx.endpoint_backend_wb then
             ctx.client_wb:send_text('{"error":"Backend unavailable"}')
-            ctx.client_wb:send_close()
+            ctx.closing = true
             return
         end
     end
@@ -642,8 +618,10 @@ function M.handle_websocket()
     local follower_addr = backend_cache:get("follower") or leader_addr
 
     -- Get endpoint config (for REST WebSocket; JSON-RPC does per-message routing)
-    -- For WS: returns client_request_cost, backend_push_cost, use_leader
-    local client_request_cost, backend_push_cost, endpoint_use_leader = M.get_request_config(uri, nil, nil)
+    local cfg = M.find_rest_config(uri)
+    local client_request_cost = cfg.client_request_cost or cfg.cost or 80
+    local backend_push_cost = cfg.backend_push_cost or 80
+    local endpoint_use_leader = cfg.use_leader
 
     -- Build context object with all request state
     local ctx = {
@@ -697,15 +675,35 @@ function M.handle_http_request(uri, http_method)
     local client_ip = ngx.var.binary_remote_addr
     local is_exempt = (ngx.var.rate_limit_override == "1")
 
-    -- Read body for POST requests (needed for JSON-RPC method extraction)
-    local body = nil
-    if http_method == "POST" then
-        ngx.req.read_body()
-        body = ngx.req.get_body_data()
-    end
+    -- Determine cost and routing based on request type
+    local cost, use_leader, jsonrpc_method, jsonrpc_id
 
-    -- Get request config (handles both REST and JSON-RPC)
-    local cost, use_leader, jsonrpc_method = M.get_request_config(uri, http_method, body)
+    if uri == "/rpc" and http_method == "POST" then
+        -- JSON-RPC request
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        if not body then
+            -- Return -32700 Parse error
+            ngx.status = 400
+            ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}')
+            return ngx.exit(400)
+        end
+        -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
+        jsonrpc_id = body:match('"id"%s*:%s*(%d+)') or body:match('"id"%s*:%s*(".-")') or "null"
+        jsonrpc_method = body:match('"method"%s*:%s*"([^"]+)"')
+        if not jsonrpc_method then
+            -- Return -32600 Invalid Request
+            ngx.status = 400
+            ngx.say('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. jsonrpc_id .. '}')
+            return ngx.exit(400)
+        end
+        local cfg = M.jsonrpc_methods[jsonrpc_method] or M.jsonrpc_methods.default
+        cost, use_leader = cfg.cost, cfg.use_leader
+    else
+        -- REST request
+        local cfg = M.find_rest_config(uri)
+        cost, use_leader = cfg.cost, cfg.use_leader
+    end
 
     -- Apply rate limiting
     local ok, err_type, remaining = M.apply_rate_limit(client_ip, cost, is_exempt)
@@ -714,17 +712,24 @@ function M.handle_http_request(uri, http_method)
         ngx.status = 429
         ngx.header["X-RateLimit-Cost"] = cost
         ngx.header["X-RateLimit-Remaining"] = math.floor(remaining or 0)
-        if err_type == "busy" then
-            ngx.header["Retry-After"] = 1
-            ngx.say('{"error":"Rate limit busy, try again"}')
-        else
-            ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / M.REFILL_RATE)
-            local error_msg = '{"error":"Rate limit exceeded","cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0)
-            if jsonrpc_method then
-                error_msg = error_msg .. ',"method":"' .. jsonrpc_method .. '"'
+        if jsonrpc_method then
+            -- JSON-RPC format per spec
+            if err_type == "busy" then
+                ngx.header["Retry-After"] = 1
+                ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. jsonrpc_id .. '}')
+            else
+                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / M.REFILL_RATE)
+                ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. jsonrpc_method .. '"}},"id":' .. jsonrpc_id .. '}')
             end
-            error_msg = error_msg .. '}'
-            ngx.say(error_msg)
+        else
+            -- REST format
+            if err_type == "busy" then
+                ngx.header["Retry-After"] = 1
+                ngx.say('{"error":"Rate limit busy, try again"}')
+            else
+                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / M.REFILL_RATE)
+                ngx.say('{"error":"Rate limit exceeded","cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
+            end
         end
         return ngx.exit(429)
     end
