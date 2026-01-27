@@ -33,12 +33,18 @@ function _M.select(path)
 
     -- Select backend based on routing decision
     if use_leader then
-        ngx.var.backend = backend_cache:get("leader") or "{{ROLLUP_LEADER_IP}}:12346"
+        ngx.var.backend = backend_cache:get("leader") 
     else
-        ngx.var.backend = backend_cache:get("follower") or
-                         backend_cache:get("leader") or
-                         "{{ROLLUP_FOLLOWER_IP}}:12346"
+        ngx.var.backend = backend_cache:get("follower") 
     end
+
+     -- Fallback if cache is empty                                                                                                                                                                                                                                
+    if not ngx.var.backend or ngx.var.backend == "" then                                                                                                                                                                                                         
+      ngx.log(ngx.ERR, "No backend available in cache")                                                                                                                                                                                                        
+      return ngx.exit(503)  -- Service Unavailable                                                                                                                                                                                                             
+    end 
+
+    ngx.log(ngx.WARN, "Routing to backend: ", ngx.var.backend)  
 end
 
 return _M
