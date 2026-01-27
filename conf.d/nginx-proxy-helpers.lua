@@ -651,7 +651,7 @@ function M.handle_websocket()
         is_jsonrpc = is_jsonrpc,
         client_wb = client_wb,
         client_ip = ngx.var.binary_remote_addr,
-        is_exempt = (ngx.var.rate_limit_override ~= "0"),
+        is_exempt = (ngx.var.rate_limit_override == "1"),
         is_single_backend = (leader_addr == follower_addr),
         endpoint_use_leader = endpoint_use_leader,
         client_request_cost = client_request_cost,
@@ -695,7 +695,7 @@ end
 function M.handle_http_request(uri, http_method)
     local backend_cache = ngx.shared.backend_cache
     local client_ip = ngx.var.binary_remote_addr
-    local is_exempt = (ngx.var.rate_limit_override ~= "0")
+    local is_exempt = (ngx.var.rate_limit_override == "1")
 
     -- Read body for POST requests (needed for JSON-RPC method extraction)
     local body = nil
