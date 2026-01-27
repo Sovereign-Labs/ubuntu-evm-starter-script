@@ -539,6 +539,9 @@ $::LocationConfig
                 end
 
                 -- Send binary frame with invalid UTF-8 bytes (0xFF is never valid in UTF-8)
+                -- Note: \\xFF in Perl qq{} becomes \xFF in Lua source, which LuaJIT
+                -- interprets as hex escape for byte 255. So this sends actual bytes
+                -- 0xFF 0xFE, not the literal ASCII string "\xFF\xFE".
                 local ok, err = wb:send_binary("\\xFF\\xFE invalid utf8")
                 if not ok then
                     ngx.say("ERR:send1:", err)
