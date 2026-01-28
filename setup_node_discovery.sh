@@ -17,14 +17,12 @@ ROLLUP_STARTER_DIR="$HOME/rollup-starter"
 NODE_DISCOVERY_CRATE_MANIFEST="${ROLLUP_STARTER_DIR}/crates/utils/node-discovery/Cargo.toml"
 OUTPUT_FILE="/usr/local/openresty/nginx/conf/cluster_info.txt"
 
-echo "Checking for git... $BRANCH_NAME"
 if ! command -v git >/dev/null 2>&1; then
    echo "Installing git..."
    yum install -y git
 fi
 
 yum install -y gcc gcc-c++
-echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME" 
 
 if ! command -v aws >/dev/null 2>&1; then
   yum install -y awscli
@@ -57,10 +55,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 if [ ! -d "${ROLLUP_STARTER_DIR}/.git" ]; then
-  echo "Cloning rollup-starter repo..."
-  echo "Checking for git... $BRANCH_NAME $DATABASE_URL"
-  echo "Checking for git... $BRANCH_NAME $DB_SECRET_ARN $DB_HOST $DB_PORT $DB_NAME $DATABASE_URL" 
-
+  echo "Cloning rollup-starter repo: $BRANCH_NAME"
   git clone "${ROLLUP_STARTER_REPO}" "${ROLLUP_STARTER_DIR}"
 fi
 
