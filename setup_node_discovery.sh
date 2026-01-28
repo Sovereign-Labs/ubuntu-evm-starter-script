@@ -61,8 +61,16 @@ if ! command -v jq >/dev/null 2>&1; then
   yum install -y jq
 fi
 
-if [ -z "$BRANCH_NAME" ] || [ -z "$DB_SECRET_ARN" ] || [ -z "$REGION" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_NAME" ]; then
-  echo "Error: Missing parameters. Need BRANCH_NAME, DB_SECRET_ARN, REGION, DB_HOST, DB_PORT, DB_NAME."
+missing=()
+if [ -z "$BRANCH_NAME" ]; then missing+=("BRANCH_NAME"); fi
+if [ -z "$DB_SECRET_ARN" ]; then missing+=("DB_SECRET_ARN"); fi
+if [ -z "$REGION" ]; then missing+=("REGION"); fi
+if [ -z "$DB_HOST" ]; then missing+=("DB_HOST"); fi
+if [ -z "$DB_PORT" ]; then missing+=("DB_PORT"); fi
+if [ -z "$DB_NAME" ]; then missing+=("DB_NAME"); fi
+if [ ${#missing[@]} -ne 0 ]; then
+  echo "Error: Missing parameters: ${missing[*]}"
+  echo "Usage: ./setup_node_discovery.sh <branch_name> <db_secret_arn> <region> <db_host> <db_port> <db_name>"
   exit 1
 fi
 
