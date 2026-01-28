@@ -400,7 +400,11 @@ function M.backend_to_client(ctx, backend_entry, backend_name)
                 ctx.client_wb:send_binary(data)
             end
         elseif typ == "ping" then
-            backend_wb:send_pong(data)
+            -- Forward ping to client so backend can manage connection liveness
+            ctx.client_wb:send_ping(data)
+        elseif typ == "pong" then
+            -- Forward pong to client (response to proxy-initiated ping, if any)
+            ctx.client_wb:send_pong(data)
         end
     end
 end
@@ -582,9 +586,28 @@ local function client_to_backend(ctx)
             ctx.closing = true
             break
         elseif typ == "ping" then
-            ctx.client_wb:send_pong(data)
+            -- Forward ping to all connected backends (backend will respond with pong)
+            -- If no backends connected yet, respond locally to maintain protocol
+            local forwarded = false
+            if ctx.backends.leader.wb then
+                ctx.backends.leader.wb:send_ping(data)
+                forwarded = true
+            end
+            if not ctx.is_single_backend and ctx.backends.follower.wb then
+                ctx.backends.follower.wb:send_ping(data)
+                forwarded = true
+            end
+            if not forwarded then
+                ctx.client_wb:send_pong(data)
+            end
         elseif typ == "pong" then
-            -- Ignore pongs
+            -- Forward pong to all connected backends (for backend-managed keepalive)
+            if ctx.backends.leader.wb then
+                ctx.backends.leader.wb:send_pong(data)
+            end
+            if not ctx.is_single_backend and ctx.backends.follower.wb then
+                ctx.backends.follower.wb:send_pong(data)
+            end
         elseif typ == "text" or typ == "binary" then
             local should_continue
             if ctx.is_jsonrpc then

@@ -1444,3 +1444,166 @@ POST /rpc
 --- error_code: 400
 --- response_body
 {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":null}
+
+
+
+=== TEST 35: Backend ping is forwarded to client and pong returns to backend
+When backend sends a ping, proxy forwards it to client. Client pong is forwarded back.
+Uses test_backend_ping method which makes the backend send a ping.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-backend-ping {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 3000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send test_backend_ping which makes backend send a ping
+                wb:send_text('{"jsonrpc":"2.0","method":"test_backend_ping","id":1}')
+
+                -- Should receive ping from backend (forwarded by proxy)
+                local data, typ, err = wb:recv_frame()
+                if typ == "ping" then
+                    ngx.say("PASS: received ping from backend")
+                    -- Send pong back (will be forwarded to backend by proxy)
+                    wb:send_pong(data)
+                    -- Backend confirms it got the pong
+                    local confirm, confirm_typ = wb:recv_frame()
+                    if confirm and confirm:match("pong_received") then
+                        ngx.say("PASS: backend confirmed pong received")
+                    else
+                        ngx.say("FAIL: backend response: " .. (confirm or "nil"))
+                    end
+                else
+                    ngx.say("FAIL: expected ping, got " .. (typ or "nil") .. ": " .. (data or "nil"))
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-backend-ping
+--- response_body
+PASS: received ping from backend
+PASS: backend confirmed pong received
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 36: Client ping is forwarded to backend and pong returns
+When client sends a ping after backend is connected, proxy forwards it to backend.
+Backend pong is forwarded back to client.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-client-ping {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 3000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- First send a text message to establish backend connection
+                wb:send_text('{"jsonrpc":"2.0","method":"test_follower_read","id":1}')
+
+                -- Get the JSON-RPC response first
+                local resp, resp_typ = wb:recv_frame()
+                if not resp or resp_typ ~= "text" then
+                    ngx.say("FAIL: expected text response")
+                    wb:send_close()
+                    return
+                end
+
+                -- Now send a ping (should be forwarded to backend by proxy)
+                wb:send_ping("client-ping-data")
+
+                -- Should receive pong from backend with modified data proving it reached backend
+                -- Backend appends "-from-follower" to prove the ping was forwarded
+                local data, typ, err = wb:recv_frame()
+                if typ == "pong" and data == "client-ping-data-from-follower" then
+                    ngx.say("PASS: received pong from backend (data modified by backend)")
+                else
+                    ngx.say("FAIL: expected pong with 'client-ping-data-from-follower', got " .. (typ or "nil") .. ": " .. (data or "nil"))
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-client-ping
+--- response_body
+PASS: received pong from backend (data modified by backend)
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 37: Client ping before backend connection gets local pong response
+When client sends ping before any JSON-RPC message (no backend connected yet),
+proxy should respond with pong locally to maintain protocol.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-early-ping {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 3000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Send ping BEFORE any JSON-RPC message (no backend connected yet)
+                wb:send_ping("early-ping-data")
+
+                -- Should receive pong from proxy (local response since no backend)
+                local data, typ, err = wb:recv_frame()
+                if typ == "pong" and data == "early-ping-data" then
+                    ngx.say("PASS: received local pong with data: " .. data)
+                else
+                    ngx.say("FAIL: expected pong, got " .. (typ or "nil") .. ": " .. (data or "nil"))
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-early-ping
+--- response_body
+PASS: received local pong with data: early-ping-data
+--- error_code: 200
+--- timeout: 5
