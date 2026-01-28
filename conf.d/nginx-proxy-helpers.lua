@@ -42,6 +42,7 @@ local M = {}
 -- Cache resty libraries at module load time (avoids per-request require overhead)
 local ws_server = require "resty.websocket.server"
 local ws_client = require "resty.websocket.client"
+local semaphore = require "ngx.semaphore"
 
 -- ============================================================================
 -- CONSTANTS
@@ -345,6 +346,34 @@ end
 -- Connection Helpers
 --------------------------------------------------------------------------------
 
+-- Synchronized write to client WebSocket.
+-- Uses semaphore to prevent race conditions when multiple threads write concurrently.
+-- This is necessary because backend_to_client threads and the main client_to_backend
+-- thread can both write to ctx.client_wb (e.g., forwarding messages vs sending pongs).
+local function send_to_client(ctx, frame_type, data, code)
+    local ok, err = ctx.client_write_sem:wait(5)
+    if not ok then
+        ngx.log(ngx.ERR, "Client write lock timeout: ", err)
+        return nil, err
+    end
+
+    local result, send_err
+    if frame_type == "text" then
+        result, send_err = ctx.client_wb:send_text(data)
+    elseif frame_type == "binary" then
+        result, send_err = ctx.client_wb:send_binary(data)
+    elseif frame_type == "ping" then
+        result, send_err = ctx.client_wb:send_ping(data)
+    elseif frame_type == "pong" then
+        result, send_err = ctx.client_wb:send_pong(data)
+    elseif frame_type == "close" then
+        result, send_err = ctx.client_wb:send_close(code, data)
+    end
+
+    ctx.client_write_sem:post()
+    return result, send_err
+end
+
 -- Create a WebSocket server connection for accepting the client's upgrade request.
 -- Called at the start of WebSocket handling to complete the handshake.
 function M.create_client_websocket()
@@ -389,22 +418,22 @@ function M.backend_to_client(ctx, backend_entry, backend_name)
                 if not ok then
                     ngx.log(ngx.WARN, "Rate limit exceeded for pushed event, closing connection")
                     ctx.closing = true
-                    ctx.client_wb:send_close(1008, "Rate limit exceeded")
+                    send_to_client(ctx, "close", "Rate limit exceeded", 1008)
                     break
                 end
             end
             -- Forward to client preserving frame type
             if typ == "text" then
-                ctx.client_wb:send_text(data)
+                send_to_client(ctx, "text", data)
             else
-                ctx.client_wb:send_binary(data)
+                send_to_client(ctx, "binary", data)
             end
         elseif typ == "ping" then
             -- Forward ping to client so backend can manage connection liveness
-            ctx.client_wb:send_ping(data)
+            send_to_client(ctx, "ping", data)
         elseif typ == "pong" then
             -- Forward pong to client (response to proxy-initiated ping, if any)
-            ctx.client_wb:send_pong(data)
+            send_to_client(ctx, "pong", data)
         end
     end
 end
@@ -470,7 +499,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
             for p, c in utf8.codes(data) do end
         end)
         if not valid_utf8 then
-            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Binary frame must contain valid UTF-8"},"id":null}')
+            send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Binary frame must contain valid UTF-8"},"id":null}')
             return true  -- continue
         end
         text_data = data
@@ -482,7 +511,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
 
     local method = text_data:match('"method"%s*:%s*"([^"]+)"')
     if not method then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
+        send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
         return true  -- continue
     end
 
@@ -493,16 +522,16 @@ local function handle_jsonrpc_message(ctx, data, typ)
     local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, cost, ctx.is_exempt)
     if not ok then
         if err_type == "busy" then
-            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. id .. '}')
+            send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. id .. '}')
         else
-            ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. method .. '"}},"id":' .. id .. '}')
+            send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. method .. '"}},"id":' .. id .. '}')
         end
         return true  -- continue
     end
 
     local backend_wb, backend_name = M.get_backend(ctx, use_leader)
     if not backend_wb then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend unavailable"},"id":' .. id .. '}')
+        send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend unavailable"},"id":' .. id .. '}')
         return false  -- break
     end
 
@@ -513,7 +542,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
         send_ok, send_err = backend_wb:send_binary(data)
     end
     if not send_ok then
-        ctx.client_wb:send_text('{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend send failed"},"id":' .. id .. '}')
+        send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend send failed"},"id":' .. id .. '}')
     end
 
     return true  -- continue
@@ -527,16 +556,16 @@ local function handle_rest_ws_message(ctx, data, typ)
     local ok, err_type, remaining = M.apply_rate_limit(ctx.client_ip, ctx.client_request_cost, ctx.is_exempt)
     if not ok then
         if err_type == "busy" then
-            ctx.client_wb:send_text('{"error":"Rate limit busy, try again"}')
+            send_to_client(ctx, "text", '{"error":"Rate limit busy, try again"}')
         else
-            ctx.client_wb:send_text('{"error":"Rate limit exceeded","cost":' .. ctx.client_request_cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
+            send_to_client(ctx, "text", '{"error":"Rate limit exceeded","cost":' .. ctx.client_request_cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
         end
         return true  -- continue
     end
 
     ctx.endpoint_backend_wb, ctx.endpoint_backend_name = M.get_backend(ctx, ctx.endpoint_use_leader)
     if not ctx.endpoint_backend_wb then
-        ctx.client_wb:send_text('{"error":"Backend unavailable"}')
+        send_to_client(ctx, "text", '{"error":"Backend unavailable"}')
         return false  -- break
     end
 
@@ -548,7 +577,7 @@ local function handle_rest_ws_message(ctx, data, typ)
     end
     if not send_ok then
         ngx.log(ngx.ERR, "Failed to send to backend: ", send_err)
-        ctx.client_wb:send_text('{"error":"Backend send failed"}')
+        send_to_client(ctx, "text", '{"error":"Backend send failed"}')
     end
 
     return true  -- continue
@@ -567,7 +596,7 @@ local function client_to_backend(ctx)
     if not ctx.is_jsonrpc then
         ctx.endpoint_backend_wb, ctx.endpoint_backend_name = M.get_backend(ctx, ctx.endpoint_use_leader)
         if not ctx.endpoint_backend_wb then
-            ctx.client_wb:send_text('{"error":"Backend unavailable"}')
+            send_to_client(ctx, "text", '{"error":"Backend unavailable"}')
             ctx.closing = true
             return
         end
@@ -598,7 +627,7 @@ local function client_to_backend(ctx)
                 forwarded = true
             end
             if not forwarded then
-                ctx.client_wb:send_pong(data)
+                send_to_client(ctx, "pong", data)
             end
         elseif typ == "pong" then
             -- Forward pong to all connected backends (for backend-managed keepalive)
@@ -651,6 +680,7 @@ function M.handle_websocket()
         uri = uri,
         is_jsonrpc = is_jsonrpc,
         client_wb = client_wb,
+        client_write_sem = semaphore.new(1),  -- Mutex for client WebSocket writes (binary semaphore)
         client_ip = ngx.var.binary_remote_addr,
         is_exempt = (ngx.var.rate_limit_override == "1"),
         is_single_backend = (leader_addr == follower_addr),
@@ -677,7 +707,9 @@ function M.handle_websocket()
     end
 
     -- Clean up: send close frames to all connections (ignore errors)
-    pcall(function() ctx.client_wb:send_close() end)
+    -- Note: Backend threads have exited at this point, so no race condition,
+    -- but using send_to_client for consistency
+    pcall(function() send_to_client(ctx, "close") end)
     pcall(function() if ctx.backends.leader.wb then ctx.backends.leader.wb:send_close() end end)
     pcall(function() if ctx.backends.follower.wb then ctx.backends.follower.wb:send_close() end end)
 end
