@@ -1,4 +1,22 @@
 #!/bin/bash
+#
+# setup_node_discovery.sh - Installs and configures the node-discovery service
+#
+# This script builds the node-discovery binary from the rollup-starter repository
+# and sets it up as a systemd service. The service queries a PostgreSQL database
+# for cluster information and writes it to a file that nginx can serve.
+#
+# Usage:
+#   ./setup_node_discovery.sh <branch_name> <db_secret_arn> <region> <db_host> <db_port> <db_name>
+#
+# Arguments:
+#   branch_name    - Git branch to checkout from rollup-starter repo
+#   db_secret_arn  - AWS Secrets Manager ARN containing database credentials
+#   region         - AWS region for Secrets Manager
+#   db_host        - PostgreSQL database host
+#   db_port        - PostgreSQL database port
+#   db_name        - PostgreSQL database name
+
 
 set -e
 
