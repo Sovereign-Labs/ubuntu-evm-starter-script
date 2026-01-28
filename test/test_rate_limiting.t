@@ -1447,7 +1447,20 @@ POST /rpc
 
 
 
-=== TEST 35: Backend ping is forwarded to client and pong returns to backend
+=== TEST 35: HTTP JSON-RPC ID with escaped quotes is echoed correctly
+String IDs containing escaped quotes should be properly re-encoded in error responses.
+Uses cjson to correctly handle JSON string escaping.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request eval
+"POST /rpc\n" . '{"jsonrpc":"2.0","id":"test\"quoted"}'
+--- error_code: 400
+--- response_body eval
+'{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":"test\"quoted"}' . "\n"
+
+
+
+=== TEST 36: Backend ping is forwarded to client and pong returns to backend
 When backend sends a ping, proxy forwards it to client. Client pong is forwarded back.
 Uses test_backend_ping method which makes the backend send a ping.
 --- http_config eval: $::HttpConfigLargeBucket
@@ -1504,7 +1517,7 @@ PASS: backend confirmed pong received
 
 
 
-=== TEST 36: Client ping is forwarded to backend and pong returns
+=== TEST 37: Client ping is forwarded to backend and pong returns
 When client sends a ping after backend is connected, proxy forwards it to backend.
 Backend pong is forwarded back to client.
 --- http_config eval: $::HttpConfigLargeBucket
@@ -1563,7 +1576,7 @@ PASS: received pong from backend (data modified by backend)
 
 
 
-=== TEST 37: Client ping before backend connection gets local pong response
+=== TEST 38: Client ping before backend connection gets local pong response
 When client sends ping before any JSON-RPC message (no backend connected yet),
 proxy should respond with pong locally to maintain protocol.
 --- http_config eval: $::HttpConfigLargeBucket
@@ -1610,7 +1623,7 @@ PASS: received local pong with data: early-ping-data
 
 
 
-=== TEST 38: Large JSON-RPC body stored in temp file is processed correctly
+=== TEST 39: Large JSON-RPC body stored in temp file is processed correctly
 When request body exceeds client_body_buffer_size, nginx stores it in a temp file.
 The proxy should read from the temp file instead of rejecting as empty body.
 Uses small buffer (1KB) so a 2KB body triggers temp file storage.
