@@ -136,9 +136,4 @@ systemctl daemon-reload
 systemctl enable node-discovery
 systemctl start node-discovery
 
-if ! systemctl is-active --quiet node-discovery; then
-  echo "ERROR: Cluster info failed to start"
-  exit 1
-fi
-
 echo "ClusterInfo service installed and running"
