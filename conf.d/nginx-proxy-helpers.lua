@@ -43,6 +43,7 @@ local M = {}
 local ws_server = require "resty.websocket.server"
 local ws_client = require "resty.websocket.client"
 local semaphore = require "ngx.semaphore"
+local cjson = require "cjson.safe"
 
 -- ============================================================================
 -- CONSTANTS
@@ -235,6 +236,18 @@ function M.find_rest_config(path)
     end
 
     return M.rest_endpoints.default
+end
+
+-- Extract JSON-RPC id field, properly encoded for inclusion in JSON responses.
+-- Uses cjson to correctly handle escaped quotes and special characters in string IDs.
+-- Returns the id as a JSON value string (e.g., 42, "my-id", null).
+-- If JSON parsing fails or id is missing/null, returns "null".
+local function extract_jsonrpc_id(text)
+    local parsed = cjson.decode(text)
+    if not parsed or parsed.id == nil or parsed.id == cjson.null then
+        return "null"
+    end
+    return cjson.encode(parsed.id)
 end
 
 -- ============================================================================
@@ -506,8 +519,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
     end
 
     -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
-    local id = text_data:match('"id"%s*:%s*(%d+)') or
-               text_data:match('"id"%s*:%s*(".-")') or "null"
+    local id = extract_jsonrpc_id(text_data)
 
     local method = text_data:match('"method"%s*:%s*"([^"]+)"')
     if not method then
@@ -744,7 +756,7 @@ function M.handle_http_request(uri, http_method)
             return ngx.exit(400)
         end
         -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
-        jsonrpc_id = body:match('"id"%s*:%s*(%d+)') or body:match('"id"%s*:%s*(".-")') or "null"
+        jsonrpc_id = extract_jsonrpc_id(body)
         jsonrpc_method = body:match('"method"%s*:%s*"([^"]+)"')
         if not jsonrpc_method then
             -- Return -32600 Invalid Request
