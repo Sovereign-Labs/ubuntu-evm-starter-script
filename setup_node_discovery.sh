@@ -20,6 +20,17 @@
 
 set -e
 
+escape_env_value() {
+  local val="$1"
+  # Escape for systemd EnvironmentFile double-quoted values.
+  val=${val//\\/\\\\}
+  val=${val//\"/\\\"}
+  val=${val//\$/\\\$}
+  val=${val//$'`'/$'\\`'}
+  val=${val//$'\n'/\\n}
+  printf '"%s"' "$val"
+}
+
 BRANCH_NAME="$1"
 DB_SECRET_ARN="$2"
 REGION="$3"
@@ -64,6 +75,13 @@ DATABASE_URL="postgresql://$DB_USERNAME:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
 export DATABASE_URL
 echo "Database connection string constructed"
 
+NODE_DISCOVERY_ENV="/etc/node-discovery.env"
+install -m 0600 /dev/null "$NODE_DISCOVERY_ENV"
+{
+  printf 'DATABASE_URL=%s\n' "$(escape_env_value "$DATABASE_URL")"
+  printf 'OUTPUT_FILE=%s\n' "$(escape_env_value "$OUTPUT_FILE")"
+} > "$NODE_DISCOVERY_ENV"
+
 
 if ! command -v cargo >/dev/null 2>&1; then
   # Install Rust toolchain for building node-discovery binary
@@ -94,7 +112,7 @@ if [ ! -f "$OUTPUT_FILE" ]; then
 fi
 
 echo "Creating systemd service for ClusterInfo...."
-cat > /etc/systemd/system/node-discovery.service << EOF
+cat > /etc/systemd/system/node-discovery.service << 'EOF'
 [Unit]
 Description=ClusterInfo
 After=network-online.target
@@ -102,6 +120,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+EnvironmentFile=/etc/node-discovery.env
 ExecStart=/usr/local/bin/node-discovery --database-url "${DATABASE_URL}" --output-file "${OUTPUT_FILE}"
 Restart=always
 RestartSec=5
