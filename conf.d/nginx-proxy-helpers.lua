@@ -750,6 +750,17 @@ function M.handle_http_request(uri, http_method)
         ngx.req.read_body()
         local body = ngx.req.get_body_data()
         if not body then
+            -- Body may be in temp file if larger than client_body_buffer_size
+            local file = ngx.req.get_body_file()
+            if file then
+                local f = io.open(file, "r")
+                if f then
+                    body = f:read("*a")
+                    f:close()
+                end
+            end
+        end
+        if not body then
             -- Return -32700 Parse error
             ngx.status = 400
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}')

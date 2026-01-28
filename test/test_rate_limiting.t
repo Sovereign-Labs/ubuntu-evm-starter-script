@@ -1607,3 +1607,25 @@ GET /test-early-ping
 PASS: received local pong with data: early-ping-data
 --- error_code: 200
 --- timeout: 5
+
+
+
+=== TEST 38: Large JSON-RPC body stored in temp file is processed correctly
+When request body exceeds client_body_buffer_size, nginx stores it in a temp file.
+The proxy should read from the temp file instead of rejecting as empty body.
+Uses small buffer (1KB) so a 2KB body triggers temp file storage.
+--- http_config eval
+my $config = $::HttpConfigLargeBucket;
+# Add small body buffer to force temp file usage for bodies > 1KB
+$config .= "\n    client_body_buffer_size 1k;\n";
+return $config;
+--- config eval: $::LocationConfig
+--- request eval
+# Create a 2KB JSON-RPC request (larger than 1KB buffer)
+my $padding = "x" x 2000;
+"POST /rpc\n" . qq({"jsonrpc":"2.0","method":"test_follower_read","params":["$padding"],"id":1})
+--- response_body chomp
+{"backend":"follower"}
+--- response_headers
+X-Backend: follower
+--- error_code: 200
