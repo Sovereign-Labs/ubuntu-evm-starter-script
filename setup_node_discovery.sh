@@ -50,8 +50,8 @@ if ! command -v jq >/dev/null 2>&1; then
   yum install -y jq
 fi
 
-if [ -z "$DB_SECRET_ARN" ] || [ -z "$REGION" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_NAME" ]; then
-  echo "Error: Missing database parameters. Need DB_SECRET_ARN, REGION, DB_HOST, DB_PORT, DB_NAME."
+if [ -z "$BRANCH_NAME" ] || [ -z "$DB_SECRET_ARN" ] || [ -z "$REGION" ] || [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_NAME" ]; then
+  echo "Error: Missing parameters. Need BRANCH_NAME, DB_SECRET_ARN, REGION, DB_HOST, DB_PORT, DB_NAME."
   exit 1
 fi
 
