@@ -56,8 +56,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EOF
   chmod 600 /etc/cron.d/update-geoip-dbs
   echo "Enabled bi-weekly database update cron."
+  cp /tmp/conf.d/geoip-setup-ENABLED.conf /tmp/conf.d/geoip-setup.conf
 else
   echo "Skipping GeoIP2 setup: GEOIP_ACCOUNT and GEOIP_LICENSE not both provided."
+  cp /tmp/conf.d/geoip-setup-DISABLED.conf /tmp/conf.d/geoip-setup.conf
 fi
 
 echo "Building OpenResty with nginx-vts module..."
