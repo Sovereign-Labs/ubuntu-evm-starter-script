@@ -568,10 +568,12 @@ function M.connect_backend(ctx, backend_entry, backend_name)
 
     local ok, err = wb:connect("ws://" .. backend_entry.addr .. ctx.uri, {
         headers = {
-            ["Host"] = ngx.var.host,
+            ["Host"] = ngx.var.http_host or ngx.var.host,
             ["X-Real-IP"] = ngx.var.remote_addr,
             ["X-Forwarded-For"] = ngx.var.proxy_add_x_forwarded_for,
-            ["X-Forwarded-Proto"] = ngx.var.scheme
+            ["X-Forwarded-Proto"] = ngx.var.scheme,
+            ["Sec-WebSocket-Protocol"] = ngx.var.http_sec_websocket_protocol,
+            ["Origin"] = ngx.var.http_origin,
         }
     })
     if not ok then
