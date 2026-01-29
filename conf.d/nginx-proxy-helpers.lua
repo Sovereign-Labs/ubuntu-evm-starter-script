@@ -245,16 +245,20 @@ function M.find_rest_config(path)
     return M.rest_endpoints.default
 end
 
--- Extract JSON-RPC id field, properly encoded for inclusion in JSON responses.
--- Uses cjson to correctly handle escaped quotes and special characters in string IDs.
--- Returns the id as a JSON value string (e.g., 42, "my-id", null).
--- If JSON parsing fails or id is missing/null, returns "null".
-local function extract_jsonrpc_id(text)
+-- Parse JSON-RPC request and extract id and method.
+-- Uses cjson to correctly handle escaped quotes and special characters.
+-- Returns: id (JSON-encoded string for responses), method (string or nil)
+-- If JSON parsing fails or id is missing/null, id defaults to "null".
+local function parse_jsonrpc_request(text)
     local parsed = cjson.decode(text)
-    if not parsed or parsed.id == nil or parsed.id == cjson.null then
-        return "null"
+    if not parsed then
+        return "null", nil
     end
-    return cjson.encode(parsed.id)
+    local id = "null"
+    if parsed.id ~= nil and parsed.id ~= cjson.null then
+        id = cjson.encode(parsed.id)
+    end
+    return id, parsed.method
 end
 
 -- ============================================================================
@@ -616,10 +620,8 @@ local function handle_jsonrpc_message(ctx, data, typ)
         text_data = data
     end
 
-    -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
-    local id = extract_jsonrpc_id(text_data)
-
-    local method = text_data:match('"method"%s*:%s*"([^"]+)"')
+    -- Parse JSON-RPC request (id for error responses, method for routing)
+    local id, method = parse_jsonrpc_request(text_data)
     if not method then
         send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
         return true  -- continue
@@ -870,9 +872,8 @@ function M.handle_http_request(uri, http_method)
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}')
             return ngx.exit(400)
         end
-        -- Extract request ID for error responses (JSON-RPC 2.0 spec: echo back client's id)
-        jsonrpc_id = extract_jsonrpc_id(body)
-        jsonrpc_method = body:match('"method"%s*:%s*"([^"]+)"')
+        -- Parse JSON-RPC request (id for error responses, method for routing)
+        jsonrpc_id, jsonrpc_method = parse_jsonrpc_request(body)
         if not jsonrpc_method then
             -- Return -32600 Invalid Request
             ngx.status = 400
