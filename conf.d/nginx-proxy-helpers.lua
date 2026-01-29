@@ -771,7 +771,8 @@ function M.handle_websocket()
     -- Validate API key if required (secure domain)
     M.validate_api_key()
 
-    local uri = ngx.var.uri
+    -- Normalize URI (remove trailing slash)
+    local uri = ngx.var.uri:gsub("/$", "")
     local is_jsonrpc = (uri == "/rpc")
 
     -- Create client WebSocket connection
@@ -845,6 +846,9 @@ end
 function M.handle_http_request(uri, http_method)
     -- Validate API key if required (secure domain)
     M.validate_api_key()
+
+    -- Normalize URI (remove trailing slash)
+    uri = uri:gsub("/$", "")
 
     local backend_cache = ngx.shared.backend_cache
     local client_ip = ngx.var.binary_remote_addr
