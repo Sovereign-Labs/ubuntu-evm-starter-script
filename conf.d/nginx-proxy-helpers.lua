@@ -19,7 +19,7 @@
 -- RATE LIMITING:
 --   Uses a token bucket algorithm with per-IP buckets stored in shared memory.
 --   Each request/message costs tokens; buckets refill at REFILL_RATE tokens/sec.
---   Atomic locking via spinlock prevents race conditions across workers.
+--   Uses resty.lock for mutex to prevent race conditions across workers.
 --
 -- WEBSOCKET PROXY:
 --   Two modes of operation:
@@ -44,6 +44,7 @@ local ws_server = require "resty.websocket.server"
 local ws_client = require "resty.websocket.client"
 local semaphore = require "ngx.semaphore"
 local cjson = require "cjson.safe"
+local resty_lock = require "resty.lock"
 
 -- ============================================================================
 -- CONSTANTS
@@ -57,13 +58,19 @@ M.WS_CLIENT_MAX_PAYLOAD = 20480                  -- Max payload from client (20K
 M.WS_BACKEND_MAX_PAYLOAD = 1048576               -- Max payload from backend (1MB)
 M.BUCKET_TTL_SEC = 3600                          -- Token bucket TTL (1 hour)
 M.BACKEND_REFRESH_INTERVAL_SEC = 0.2             -- Backend IP refresh interval (200ms)
-M.SPINLOCK_INITIAL_WAIT_SEC = 0.001              -- Initial spinlock wait
-M.SPINLOCK_MAX_WAIT_SEC = 0.05                   -- Max spinlock wait
-M.SPINLOCK_MAX_ATTEMPTS = 10                     -- Max spinlock attempts
+M.LOCK_TIMEOUT_SEC = 0.5                         -- Max wait time to acquire lock
 
--- Token bucket configuration
+-- Token bucket configuration (defaults, can be overridden per-request via nginx vars)
 M.BUCKET_CAPACITY = BUCKET_CAPACITY or 150  -- Maximum tokens
 M.REFILL_RATE = REFILL_RATE or 150          -- Tokens added per second
+
+-- Get rate limit config from nginx variables with fallback to module defaults
+-- This allows per-server-block configuration via: set $bucket_capacity 500;
+local function get_rate_limit_config()
+    local capacity = tonumber(ngx.var.bucket_capacity) or M.BUCKET_CAPACITY
+    local refill = tonumber(ngx.var.refill_rate) or M.REFILL_RATE
+    return capacity, refill
+end
 
 -- JSON-RPC subscription costs (Infura-style pricing model)
 M.SUBSCRIBE_COST = 5                    -- Cost for eth_subscribe/eth_unsubscribe call
@@ -134,7 +141,7 @@ M.rest_endpoints = {
     ["/sequencer/txs/{txHash}"] = { cost = 80, use_leader = false },
     ["/sequencer/txs/{txHash}/status"] = { cost = 80, use_leader = false },
     ["/sequencer/txs/{txHash}/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
-    ["/sequencer/ready"] = { cost = 5, use_leader = false },
+    ["/sequencer/ready"] = { cost = 5, use_leader = true },  -- health check for leader node
     ["/sequencer/unstable/events"] = { cost = 255, use_leader = false },
     ["/sequencer/unstable/events/{eventOffset}"] = { cost = 80, use_leader = false },
     ["/sequencer/events/ws"] = { client_request_cost = 0, backend_push_cost = 80, use_leader = false },
@@ -254,7 +261,33 @@ end
 -- RATE LIMITING
 -- ============================================================================
 
--- Apply rate limiting using token bucket algorithm with atomic locking.
+-- Parse packed bucket state "tokens:timestamp" -> tokens, last_refill
+local function parse_bucket_state(value)
+    if type(value) ~= "string" then
+        return nil, nil
+    end
+    local tokens_str, last_str = value:match("^([^:]+):([^:]+)$")
+    if not tokens_str then
+        return nil, nil
+    end
+    return tonumber(tokens_str), tonumber(last_str)
+end
+
+-- Store bucket state as packed string, returns ok, err
+local function store_bucket_state(buckets, bucket_key, tokens, last_refill)
+    local state = tostring(tokens) .. ":" .. tostring(last_refill)
+    local ok, err, forcible = buckets:set(bucket_key, state, M.BUCKET_TTL_SEC)
+    if not ok then
+        ngx.log(ngx.ERR, "failed to persist token bucket state: ", err)
+        return nil, err
+    end
+    if forcible then
+        ngx.log(ngx.WARN, "token_buckets shared dict full, evicted old entries")
+    end
+    return true
+end
+
+-- Apply rate limiting using token bucket algorithm with mutex locking.
 --
 -- Token bucket works as follows:
 -- - Each client IP has a bucket that holds up to BUCKET_CAPACITY tokens
@@ -262,69 +295,134 @@ end
 -- - Each request costs a certain number of tokens
 -- - If bucket has insufficient tokens, request is rate limited
 --
+-- Rate limits are configurable per-server-block via nginx variables:
+--   set $bucket_capacity 500;
+--   set $refill_rate 500;
+--
 -- Returns: ok (boolean), err_type ("busy"|"exceeded"|nil), remaining_tokens
 --
--- Locking: Uses spinlock via shared dict's atomic add() operation.
--- The add() only succeeds if key doesn't exist, providing mutual exclusion.
+-- Storage: Single key per IP with packed value "tokens:timestamp" (halves memory vs two keys)
+-- TTL: Refreshed on every request (including rate-limited) to prevent abusive clients
+--      from "waiting out" the TTL to reset their bucket.
+--
+-- Locking: Uses resty.lock for cross-worker mutual exclusion per client IP.
 function M.apply_rate_limit(client_ip, cost, is_exempt)
     if is_exempt then
         return true, nil, nil  -- Exempt IPs bypass rate limiting entirely
     end
 
+    -- Get per-request rate limit config from nginx variables
+    local bucket_capacity, refill_rate = get_rate_limit_config()
+
     local buckets = ngx.shared.token_buckets
     local current_time = ngx.now()
-    local bucket_key = "bucket:" .. client_ip
-    local last_refill_key = "refill:" .. client_ip
-    local lock_key = "lock:" .. client_ip
+    local bucket_key = "tb:" .. client_ip  -- Single key per IP (tb = token bucket)
 
-    -- Acquire lock using spinlock with exponential backoff.
-    -- buckets:add() is atomic - only succeeds if key doesn't exist.
-    local lock_acquired = false
-    local wait_time = M.SPINLOCK_INITIAL_WAIT_SEC
-    for attempt = 1, M.SPINLOCK_MAX_ATTEMPTS do
-        local ok = buckets:add(lock_key, true, 1)
-        if ok then
-            lock_acquired = true
-            break
-        end
-        ngx.sleep(wait_time)
-        wait_time = math.min(wait_time * 2, M.SPINLOCK_MAX_WAIT_SEC)
-    end
-
-    if not lock_acquired then
+    -- Create lock object (uses token_buckets shared dict for lock storage)
+    local lock, err = resty_lock:new("token_buckets", { timeout = M.LOCK_TIMEOUT_SEC })
+    if not lock then
+        ngx.log(ngx.ERR, "failed to create lock: ", err)
         return false, "busy", nil
     end
 
-    -- Read and refill tokens
-    local tokens = buckets:get(bucket_key)
-    local last_refill = buckets:get(last_refill_key) or current_time
+    -- Acquire per-IP lock (each client IP gets its own lock key)
+    local elapsed, err = lock:lock("lock:" .. client_ip)
+    if not elapsed then
+        return false, "busy", nil
+    end
 
-    if not tokens then
+    -- Read and refill tokens from packed format
+    local tokens, last_refill = parse_bucket_state(buckets:get(bucket_key))
+
+    if tokens == nil then
         -- First request from this IP: initialize with full bucket
-        tokens = M.BUCKET_CAPACITY
+        tokens = bucket_capacity
+        last_refill = current_time
     else
         -- Calculate tokens earned since last refill
-        local elapsed = current_time - last_refill
-        local new_tokens = elapsed * M.REFILL_RATE
-        -- Add earned tokens, but don't exceed bucket capacity
-        tokens = math.min(M.BUCKET_CAPACITY, tokens + new_tokens)
+        local time_elapsed = current_time - last_refill
+        if time_elapsed > 0 then
+            local new_tokens = time_elapsed * refill_rate
+            -- Add earned tokens, but don't exceed bucket capacity
+            tokens = math.min(bucket_capacity, tokens + new_tokens)
+        end
     end
 
     -- Check and consume tokens
     local rate_limited = tokens < cost
     if not rate_limited then
         tokens = tokens - cost
-        buckets:set(bucket_key, tokens, M.BUCKET_TTL_SEC)
-        buckets:set(last_refill_key, current_time, M.BUCKET_TTL_SEC)
     end
 
-    -- Release lock
-    buckets:delete(lock_key)
+    -- Always persist state (refreshes TTL even for rate-limited requests)
+    local ok = store_bucket_state(buckets, bucket_key, tokens, current_time)
 
+    -- Release lock
+    lock:unlock()
+
+    if not ok then
+        return false, "busy", nil
+    end
     if rate_limited then
         return false, "exceeded", tokens
     end
     return true, nil, tokens
+end
+
+-- ============================================================================
+-- API KEY AUTHENTICATION
+-- ============================================================================
+-- Validates API key if $require_api_key nginx variable is set to "1".
+-- This enables the same Lua handlers to serve both public (no auth) and
+-- secure (API key required) endpoints based on server block configuration.
+--
+-- Authentication flow:
+-- 1. Check if API key is required (via $require_api_key nginx variable)
+-- 2. Check brute force rate limit (via failed_auth_limit shared dict)
+-- 3. Validate key via $valid_api_key nginx map (populated from http-base.conf)
+-- 4. Return appropriate error for missing or invalid keys
+
+-- Validates API key if $require_api_key is set
+-- Handles both "no key" and "invalid key" cases with appropriate messages
+function M.validate_api_key()
+    -- Skip if not required (public endpoint)
+    if ngx.var.require_api_key ~= "1" then
+        return true
+    end
+
+    local fail_cache = ngx.shared.failed_auth_limit
+    local client_ip = ngx.var.binary_remote_addr
+
+    -- Check brute force rate limit FIRST (before revealing any info)
+    local fail_key = "auth_fail:" .. client_ip
+    local fail_count = fail_cache:get(fail_key) or 0
+    if fail_count > 10 then
+        ngx.status = 429
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"error": "Too many failed authentication attempts"}')
+        return ngx.exit(429)
+    end
+
+    -- Check if request has API key in path (using $valid_api_key map)
+    if ngx.var.valid_api_key == "0" then
+        -- Increment failure counter (TTL 5 seconds)
+        fail_cache:incr(fail_key, 1, 0, 5)
+
+        -- Determine appropriate error message
+        local uri = ngx.var.request_uri
+        local has_key_in_path = uri:match("^/rpc/[^/]+")
+
+        ngx.status = 401
+        ngx.header["Content-Type"] = "application/json"
+        if has_key_in_path then
+            ngx.say('{"error": "Invalid API key"}')
+        else
+            ngx.say('{"error": "API key required. Use /rpc/<api_key>"}')
+        end
+        return ngx.exit(401)
+    end
+
+    return true
 end
 
 -- ============================================================================
@@ -666,6 +764,9 @@ end
 -- Main entry point for WebSocket proxy.
 -- Called from nginx content_by_lua_block. Handles all setup internally.
 function M.handle_websocket()
+    -- Validate API key if required (secure domain)
+    M.validate_api_key()
+
     local uri = ngx.var.uri
     local is_jsonrpc = (uri == "/rpc")
 
@@ -694,7 +795,7 @@ function M.handle_websocket()
         client_wb = client_wb,
         client_write_sem = semaphore.new(1),  -- Mutex for client WebSocket writes (binary semaphore)
         client_ip = ngx.var.binary_remote_addr,
-        is_exempt = (ngx.var.rate_limit_override == "1"),
+        is_exempt = (ngx.var.rate_limit_key == "1"),
         is_single_backend = (leader_addr == follower_addr),
         endpoint_use_leader = endpoint_use_leader,
         client_request_cost = client_request_cost,
@@ -738,9 +839,12 @@ end
 -- Sets ngx.var.backend to the selected backend address.
 -- Returns 429 with rate limit info if limit exceeded.
 function M.handle_http_request(uri, http_method)
+    -- Validate API key if required (secure domain)
+    M.validate_api_key()
+
     local backend_cache = ngx.shared.backend_cache
     local client_ip = ngx.var.binary_remote_addr
-    local is_exempt = (ngx.var.rate_limit_override == "1")
+    local is_exempt = (ngx.var.rate_limit_key == "1")
 
     -- Determine cost and routing based on request type
     local cost, use_leader, jsonrpc_method, jsonrpc_id
@@ -787,6 +891,7 @@ function M.handle_http_request(uri, http_method)
     local ok, err_type, remaining = M.apply_rate_limit(client_ip, cost, is_exempt)
 
     if not ok then
+        local _, refill_rate = get_rate_limit_config()
         ngx.status = 429
         ngx.header["X-RateLimit-Cost"] = cost
         ngx.header["X-RateLimit-Remaining"] = math.floor(remaining or 0)
@@ -796,7 +901,7 @@ function M.handle_http_request(uri, http_method)
                 ngx.header["Retry-After"] = 1
                 ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. jsonrpc_id .. '}')
             else
-                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / M.REFILL_RATE)
+                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / refill_rate)
                 ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. jsonrpc_method .. '"}},"id":' .. jsonrpc_id .. '}')
             end
         else
@@ -805,7 +910,7 @@ function M.handle_http_request(uri, http_method)
                 ngx.header["Retry-After"] = 1
                 ngx.say('{"error":"Rate limit busy, try again"}')
             else
-                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / M.REFILL_RATE)
+                ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / refill_rate)
                 ngx.say('{"error":"Rate limit exceeded","cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
             end
         end
@@ -814,9 +919,10 @@ function M.handle_http_request(uri, http_method)
 
     -- Add rate limit headers for successful requests
     if not is_exempt and remaining then
+        local bucket_capacity, _ = get_rate_limit_config()
         ngx.header["X-RateLimit-Cost"] = cost
         ngx.header["X-RateLimit-Remaining"] = math.floor(remaining)
-        ngx.header["X-RateLimit-Capacity"] = M.BUCKET_CAPACITY
+        ngx.header["X-RateLimit-Capacity"] = bucket_capacity
     end
 
     -- Select backend based on routing decision

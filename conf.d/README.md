@@ -10,10 +10,12 @@ The rate limiting setup uses OpenResty's Lua module to implement token bucket ra
 
 | File | Purpose |
 |------|---------|
+| `http-base.conf` | Base HTTP config: Cloudflare, logging, shared dicts, Lua module loading |
 | `nginx-proxy-helpers.lua` | Core Lua module with rate limiting and proxy logic |
-| `token-bucket-setup.conf` | Shared dict initialization and Lua module loading |
 | `websocket-proxy.conf` | WebSocket location block with Lua handler |
-| `proxy-location-rate-limited.conf` | HTTP location block with rate limiting |
+| `http-proxy.conf` | HTTP location block with rate limiting |
+| `common-locations.conf` | Health check and ACME challenge locations |
+| `api-key-locations.conf` | API key URL rewriting for secure endpoints |
 
 ### Architecture
 
@@ -21,23 +23,26 @@ The rate limiting setup uses OpenResty's Lua module to implement token bucket ra
 ┌─────────────────────────────────────────────────────────────────┐
 │                        nginx worker                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  token-bucket-setup.conf                                        │
+│  http-base.conf                                                 │
 │  ├── lua_shared_dict token_buckets (cross-worker state)         │
+│  ├── lua_shared_dict backend_cache (leader/follower IPs)        │
+│  ├── lua_shared_dict failed_auth_limit (brute force protection) │
 │  ├── lua_package_path (module loading)                          │
-│  └── init_by_lua_block (load nginx-proxy-helpers.lua)           │
+│  ├── init_by_lua_block (load nginx-proxy-helpers.lua)           │
+│  └── $rate_limit_key (exemption: "1" = exempt, "0" = limited)   │
 ├─────────────────────────────────────────────────────────────────┤
 │  websocket-proxy.conf                                           │
 │  ├── location = /rpc (HTTP or WebSocket)                        │
 │  │   ├── WebSocket → proxy.handle_websocket()                   │
-│  │   └── HTTP → rewrite to /_main_handler                       │
+│  │   └── HTTP → rewrite to @http_handler                        │
 │  └── location ~ .*/ws$ (WebSocket only)                         │
 │      ├── WebSocket → proxy.handle_websocket()                   │
 │      └── HTTP → 426 Upgrade Required                            │
 ├─────────────────────────────────────────────────────────────────┤
-│  proxy-location-rate-limited.conf                               │
-│  └── location /_main_handler                                    │
-│      ├── access_by_lua_block → proxy.apply_rate_limit()         │
-│      └── content_by_lua_block → proxy.handle_http_request()     │
+│  http-proxy.conf                                                │
+│  ├── location @http_handler (internal redirect target)          │
+│  └── location ~ ^/ (catch-all)                                  │
+│      └── access_by_lua_block → proxy.handle_http_request()      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -53,15 +58,17 @@ REST WebSocket endpoints (`/ws`) are WebSocket-only and reject plain HTTP reques
 
 ### Rate Limiting
 
-Token bucket algorithm with:
-- **Bucket capacity**: 10,000 tokens per IP
-- **Refill rate**: 1,000 tokens/second
-- **Atomic operations**: Spinlock for concurrent request safety
+Token bucket algorithm with configurable limits per server block:
+- **Bucket capacity**: Set via `$bucket_capacity` (default: 150 tokens)
+- **Refill rate**: Set via `$refill_rate` (default: 150 tokens/sec)
+- **Concurrency**: Uses `resty.lock` mutex for cross-worker safety
+- **Storage**: Single key per IP with packed `"tokens:timestamp"` format (memory efficient)
+- **TTL**: 1 hour, refreshed on every request (including rate-limited) to prevent bucket reset exploits
 
 Rate limit headers returned:
-- `X-RateLimit-Limit`: Bucket capacity
+- `X-RateLimit-Capacity`: Bucket capacity
 - `X-RateLimit-Remaining`: Tokens remaining
-- `X-RateLimit-Reset`: Seconds until bucket refills
+- `X-RateLimit-Cost`: Cost of the request
 
 ### Leader/Follower Routing
 
@@ -80,19 +87,23 @@ In your main nginx config:
 ```nginx
 http {
     include conf.d/http-base.conf;
-    include conf.d/token-bucket-setup.conf;
 
     server {
         listen 443 ssl;
 
+        # Rate limit settings
+        set $bucket_capacity 150;
+        set $refill_rate 150;
+
         include conf.d/ssl.conf;
+        include conf.d/common-locations.conf;
         include conf.d/websocket-proxy.conf;
-        include conf.d/proxy-location-rate-limited.conf;
+        include conf.d/http-proxy.conf;
     }
 }
 ```
 
-See `nginx-https-rate-limited.conf` in the parent directory for a complete example.
+See `regular-proxy.conf` in the parent directory for a complete example.
 
 ### Testing
 
@@ -103,9 +114,11 @@ cd test
 make test
 ```
 
-### Environment Variables
+### Nginx Variables
 
 The Lua module reads these nginx variables:
-- `$leader_backend`: Leader node address (e.g., `127.0.0.1:8545`)
-- `$follower_backend`: Follower node address (e.g., `127.0.0.1:8546`)
-- `$rate_limit_override`: Set to `1` to bypass rate limiting (e.g., for allowlisted IPs)
+- `$bucket_capacity`: Token bucket size (default: 150)
+- `$refill_rate`: Tokens added per second (default: 150)
+- `$rate_limit_key`: Set to `1` to bypass rate limiting (via `$ip_exempt` or `$host_exempt`)
+- `$require_api_key`: Set to `1` to require API key authentication
+- `$valid_api_key`: Set by map based on `/rpc/<key>` pattern matching

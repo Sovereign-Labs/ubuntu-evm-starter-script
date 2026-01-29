@@ -6,7 +6,7 @@ use File::Basename qw(dirname);
 
 # Get the directory containing this test file
 my $test_dir = dirname(abs_path(__FILE__));
-my $project_dir = dirname($test_dir);
+our $project_dir = dirname($test_dir);
 
 # Read the test HTTP config
 my $http_config_path = "$test_dir/test-http-config.conf";
@@ -20,7 +20,7 @@ $HttpConfigBase =~ s/__PROJECT_DIR__/$project_dir/g;
 # Location configs via include (uses same files as production)
 our $LocationConfig = qq{
     include $project_dir/conf.d/websocket-proxy.conf;
-    include $project_dir/conf.d/proxy-location-rate-limited.conf;
+    include $project_dir/conf.d/http-proxy.conf;
 };
 
 # Helper to modify bucket size in config
@@ -34,13 +34,58 @@ sub with_bucket {
 
 # Config with localhost exempted (for testing exemption behavior)
 our $HttpConfigExempt = $::HttpConfigBase;
-$HttpConfigExempt =~ s/geo \$rate_limit_override \{/geo \$rate_limit_override {\n        127.0.0.1 1;  # Exempt localhost/;
+$HttpConfigExempt =~ s/geo \$ip_exempt \{/geo \$ip_exempt {\n        127.0.0.1 1;  # Exempt localhost/;
 
 # Large bucket - no rate limit interference
 our $HttpConfigLargeBucket = with_bucket(10000, 10000);
 
 # Tiny bucket - triggers rate limiting immediately
 our $HttpConfigTinyBucket = with_bucket(1, 1);
+
+# Config with API key validation enabled and a valid key defined
+our $HttpConfigWithApiKey = $::HttpConfigLargeBucket;
+# Add the valid_api_key map with test keys
+$HttpConfigWithApiKey =~ s/(map \$http_upgrade)/$1/;  # Keep existing maps
+$HttpConfigWithApiKey .= qq{
+    # API key validation map for testing
+    map \$request_uri \$valid_api_key {
+        ~^/rpc/test_valid_key(/|\$) 1;
+        ~^/rpc/another_valid_key(/|\$) 1;
+        default 0;
+    }
+};
+
+# Location config requiring API key
+our $LocationConfigWithApiKey = qq{
+    set \$require_api_key 1;
+    include $::project_dir/conf.d/api-key-locations.conf;
+    include $::project_dir/conf.d/websocket-proxy.conf;
+    include $::project_dir/conf.d/http-proxy.conf;
+};
+
+# Location config NOT requiring API key (public)
+our $LocationConfigPublic = qq{
+    set \$require_api_key 0;
+    include $::project_dir/conf.d/websocket-proxy.conf;
+    include $::project_dir/conf.d/http-proxy.conf;
+};
+
+# Config with nginx variable rate limits (not global Lua vars)
+our $HttpConfigWithNginxVars = $::HttpConfigBase;
+# Add valid_api_key map (required even when not using API keys, to avoid nil errors)
+$HttpConfigWithNginxVars .= qq{
+    map \$request_uri \$valid_api_key {
+        default 0;
+    }
+};
+
+# Location config with custom rate limits via nginx variables
+our $LocationConfigCustomRateLimits = qq{
+    set \$bucket_capacity 2;
+    set \$refill_rate 1;
+    include $project_dir/conf.d/websocket-proxy.conf;
+    include $project_dir/conf.d/http-proxy.conf;
+};
 
 run_tests();
 
@@ -193,7 +238,7 @@ my $config = $::HttpConfigBase;
 # Tiny bucket that would rate limit immediately (set globals before require)
 $config =~ s/(init_by_lua_block \{)/$1\n        BUCKET_CAPACITY = 1\n        REFILL_RATE = 0/;
 # Add localhost to exemption list
-$config =~ s/geo \$rate_limit_override \{/geo \$rate_limit_override {\n        127.0.0.1 1;  # Exempt localhost/;
+$config =~ s/geo \$ip_exempt \{/geo \$ip_exempt {\n        127.0.0.1 1;  # Exempt localhost/;
 return $config;
 --- config eval: $::LocationConfig
 --- pipelined_requests eval
@@ -1641,4 +1686,108 @@ my $padding = "x" x 2000;
 {"backend":"follower"}
 --- response_headers
 X-Backend: follower
+--- error_code: 200
+
+
+
+=== TEST 40: /sequencer/ready routes to leader (health check for leader node)
+The /sequencer/ready endpoint should route to leader for checking leader health.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+GET /sequencer/ready
+--- response_body chomp
+{"backend":"leader"}
+--- response_headers
+X-Backend: leader
+--- error_code: 200
+
+
+
+=== TEST 41: Rate limits configurable via nginx variables - capacity header reflects config
+When $bucket_capacity is set via nginx variable, it overrides module defaults.
+The X-RateLimit-Capacity header should reflect the configured value (999 instead of default 150).
+--- http_config eval: $::HttpConfigWithNginxVars
+--- config eval
+qq{
+    set \$bucket_capacity 999;
+    set \$refill_rate 100;
+    include $::project_dir/conf.d/websocket-proxy.conf;
+    include $::project_dir/conf.d/http-proxy.conf;
+}
+--- request
+GET /rollup/schema
+--- response_body chomp
+{"backend":"follower"}
+--- response_headers
+X-RateLimit-Capacity: 999
+--- error_code: 200
+
+
+
+=== TEST 42: Rate limits via nginx variables - low capacity triggers 429
+When $bucket_capacity is set lower than request cost, rate limiting kicks in.
+With capacity=2 and /rollup/schema cost=5, request fails immediately (2 < 5).
+--- http_config eval: $::HttpConfigWithNginxVars
+--- config eval
+qq{
+    set \$bucket_capacity 2;
+    set \$refill_rate 1;
+    include $::project_dir/conf.d/websocket-proxy.conf;
+    include $::project_dir/conf.d/http-proxy.conf;
+}
+--- request
+GET /rollup/schema
+--- response_body_like: Rate limit exceeded
+--- error_code: 429
+
+
+
+=== TEST 43: Public endpoint without API key requirement works normally
+When $require_api_key is 0 (or unset), requests proceed without auth.
+--- http_config eval: $::HttpConfigWithApiKey
+--- config eval: $::LocationConfigPublic
+--- request
+POST /rpc
+{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
+--- response_body chomp
+{"backend":"follower"}
+--- error_code: 200
+
+
+
+=== TEST 44: Secure endpoint rejects request without API key
+When $require_api_key is 1 and no key is provided, returns 401.
+--- http_config eval: $::HttpConfigWithApiKey
+--- config eval: $::LocationConfigWithApiKey
+--- request
+POST /rpc
+{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
+--- response_body_like: API key required
+--- error_code: 401
+
+
+
+=== TEST 45: Secure endpoint rejects invalid API key
+When $require_api_key is 1 and an invalid key is provided, returns 401.
+--- http_config eval: $::HttpConfigWithApiKey
+--- config eval: $::LocationConfigWithApiKey
+--- request
+POST /rpc/invalid_key_here
+{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
+--- response_body_like: Invalid API key
+--- error_code: 401
+
+
+
+=== TEST 46: Secure endpoint accepts valid API key and rewrites URL
+When $require_api_key is 1 and a valid key in /rpc/<key> format is provided,
+request is authenticated, URL is rewritten to /rpc, and request proceeds.
+--- http_config eval: $::HttpConfigWithApiKey
+--- config eval: $::LocationConfigWithApiKey
+--- request
+POST /rpc/test_valid_key
+{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
+--- response_body chomp
+{"backend":"follower"}
 --- error_code: 200
