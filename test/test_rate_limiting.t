@@ -224,7 +224,7 @@ Retry-After: \d+
 --- request
 POST /rpc
 {"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":1}
---- error_code: 429
+--- error_code: 200
 --- response_body_like chomp
 \{"jsonrpc":"2.0","error":\{"code":-32000,"message":"Rate limit exceeded","data":\{"cost":\d+,"remaining":\d+,"method":"test_follower_read"\}\},"id":1\}
 
@@ -1444,25 +1444,25 @@ PASS: single backend - read returned leader (not follower)
 
 
 === TEST 31: HTTP JSON-RPC with empty body returns -32700 Parse error
-POST /rpc with no body should return proper JSON-RPC error.
+POST /rpc with no body should return proper JSON-RPC error (HTTP 200 per JSON-RPC convention).
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
 POST /rpc
---- error_code: 400
+--- error_code: 200
 --- response_body
 {"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty or invalid body"},"id":null}
 
 
 
 === TEST 32: HTTP JSON-RPC with missing method returns -32600 Invalid Request
-POST /rpc with JSON body but no method field should return proper JSON-RPC error.
+POST /rpc with JSON body but no method field should return proper JSON-RPC error (HTTP 200).
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
 POST /rpc
 {"jsonrpc":"2.0","id":42}
---- error_code: 400
+--- error_code: 200
 --- response_body
 {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":42}
 
@@ -1474,7 +1474,7 @@ POST /rpc
 --- request
 POST /rpc
 {"jsonrpc":"2.0","params":[],"id":"req-abc-123"}
---- error_code: 400
+--- error_code: 200
 --- response_body
 {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":"req-abc-123"}
 
@@ -1486,7 +1486,7 @@ POST /rpc
 --- request
 POST /rpc
 {"jsonrpc":"2.0","params":[]}
---- error_code: 400
+--- error_code: 200
 --- response_body
 {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":null}
 
@@ -1499,7 +1499,7 @@ Uses cjson to correctly handle JSON string escaping.
 --- config eval: $::LocationConfig
 --- request eval
 "POST /rpc\n" . '{"jsonrpc":"2.0","id":"test\"quoted"}'
---- error_code: 400
+--- error_code: 200
 --- response_body eval
 '{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":"test\"quoted"}' . "\n"
 
@@ -1842,7 +1842,8 @@ GET /test-client-disconnect-cleanup
 === TEST 48: Invalid requests consume rate limit tokens (HTTP)
 Invalid JSON-RPC requests (missing method) should still cost tokens (5 each).
 With bucket=90: normally one valid request (cost=80) would succeed.
-But after 3 invalid requests (3*5=15), only 75 tokens remain, so valid request fails.
+But after 3 invalid requests (3*5=15), only 75 tokens remain, so valid request gets rate limited.
+All return HTTP 200 per JSON-RPC convention (error in body).
 --- http_config eval
 my $config = $::HttpConfigBase;
 $config =~ s/(init_by_lua_block \{)/$1\n        BUCKET_CAPACITY = 90\n        REFILL_RATE = 0/;
@@ -1856,4 +1857,11 @@ return $config;
     "POST /rpc\n" . '{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":4}'
 ]
 --- error_code eval
-[400, 400, 400, 429]
+[200, 200, 200, 200]
+--- response_body_like eval
+[
+    qr/Missing method/,
+    qr/Missing method/,
+    qr/Missing method/,
+    qr/Rate limit exceeded/
+]

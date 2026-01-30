@@ -868,17 +868,17 @@ function M.handle_http_request(uri, http_method)
         local body = ngx.req.get_body_data()
         if not body then
             M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
-            ngx.status = 400
+            -- JSON-RPC: return 200 with error in body (tooling expects 200)
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty or invalid body"},"id":null}')
-            return ngx.exit(400)
+            return ngx.exit(200)
         end
         -- Parse JSON-RPC request (id for error responses, method for routing)
         jsonrpc_id, jsonrpc_method = parse_jsonrpc_request(body)
         if not jsonrpc_method then
             M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
-            ngx.status = 400
+            -- JSON-RPC: return 200 with error in body (tooling expects 200)
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. jsonrpc_id .. '}')
-            return ngx.exit(400)
+            return ngx.exit(200)
         end
         local cfg = M.jsonrpc_methods[jsonrpc_method] or M.jsonrpc_methods.default
         cost, use_leader = cfg.cost, cfg.use_leader
@@ -893,11 +893,10 @@ function M.handle_http_request(uri, http_method)
 
     if not ok then
         local _, refill_rate = get_rate_limit_config()
-        ngx.status = 429
         ngx.header["X-RateLimit-Cost"] = cost
         ngx.header["X-RateLimit-Remaining"] = math.floor(remaining or 0)
         if jsonrpc_method then
-            -- JSON-RPC format per spec
+            -- JSON-RPC: return 200 with error in body (tooling expects 200)
             if err_type == "busy" then
                 ngx.header["Retry-After"] = 1
                 ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit busy, try again"},"id":' .. jsonrpc_id .. '}')
@@ -905,8 +904,10 @@ function M.handle_http_request(uri, http_method)
                 ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / refill_rate)
                 ngx.say('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Rate limit exceeded","data":{"cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. ',"method":"' .. jsonrpc_method .. '"}},"id":' .. jsonrpc_id .. '}')
             end
+            return ngx.exit(200)
         else
-            -- REST format
+            -- REST: return 429 (standard HTTP rate limit status)
+            ngx.status = 429
             if err_type == "busy" then
                 ngx.header["Retry-After"] = 1
                 ngx.say('{"error":"Rate limit busy, try again"}')
@@ -914,8 +915,8 @@ function M.handle_http_request(uri, http_method)
                 ngx.header["Retry-After"] = math.ceil((cost - (remaining or 0)) / refill_rate)
                 ngx.say('{"error":"Rate limit exceeded","cost":' .. cost .. ',"remaining":' .. math.floor(remaining or 0) .. '}')
             end
+            return ngx.exit(429)
         end
-        return ngx.exit(429)
     end
 
     -- Add rate limit headers for successful requests
