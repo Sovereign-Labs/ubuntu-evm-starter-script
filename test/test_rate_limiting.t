@@ -1791,3 +1791,70 @@ POST /rpc/test_valid_key
 --- response_body chomp
 {"backend":"follower"}
 --- error_code: 200
+
+
+
+=== TEST 47: Client disconnect triggers fast backend cleanup
+When client sends close, backend threads should exit promptly (not wait for recv timeout).
+Uses a long recv timeout (30s) - test would timeout if close frames aren't sent to backends.
+--- http_config eval
+my $config = $::HttpConfigBase;
+# Use long timeout (30s) to catch missing close frames - test timeout is 5s
+$config =~ s/(init_by_lua_block \{)/$1\n        WS_TIMEOUT_MS = 30000\n        BUCKET_CAPACITY = 10000/;
+return $config;
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-client-disconnect-cleanup {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 5000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                -- Establish backend connection with a request
+                local ok, err = wb:send_text('{"jsonrpc":"2.0","method":"test_leader_write","params":[],"id":1}')
+                if not ok then
+                    ngx.say("ERR:send:", err)
+                    return
+                end
+                local data, typ, err = wb:recv_frame()
+                if not data or not data:match('"result"') then
+                    ngx.say("ERR:recv:", err or data)
+                    return
+                end
+
+                -- Record time before close
+                local start_time = ngx.now()
+
+                -- Send close frame
+                wb:send_close()
+
+                -- Wait for server's close frame - proxy sends this after cleanup completes
+                -- If backend threads aren't unblocked, this would timeout (30s recv wait)
+                local data2, typ2, err2 = wb:recv_frame()
+
+                local elapsed = ngx.now() - start_time
+                if elapsed > 2 then
+                    ngx.say("SLOW:cleanup took ", elapsed, "s")
+                    return
+                end
+
+                ngx.say("OK:cleanup completed in ", string.format("%.2f", elapsed), "s")
+            }
+        }
+}
+--- request
+GET /test-client-disconnect-cleanup
+--- response_body_like: ^OK:cleanup completed in
+--- error_code: 200
+--- timeout: 5

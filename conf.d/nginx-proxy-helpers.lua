@@ -818,18 +818,20 @@ function M.handle_websocket()
     -- Run main loop until client disconnects or error
     client_to_backend(ctx)
 
-    -- Signal all backend threads to stop and wait for them
+    -- Signal all backend threads to stop
     ctx.closing = true
+
+    -- Send close frames to backends to unblock their recv_frame() calls
+    pcall(function() if ctx.backends.leader.wb then ctx.backends.leader.wb:send_close() end end)
+    pcall(function() if ctx.backends.follower.wb then ctx.backends.follower.wb:send_close() end end)
+
+    -- Wait for backend threads to exit
     for _, thread in ipairs(ctx.backend_threads) do
         ngx.thread.wait(thread)
     end
 
-    -- Clean up: send close frames to all connections (ignore errors)
-    -- Note: Backend threads have exited at this point, so no race condition,
-    -- but using send_to_client for consistency
+    -- Send close frame to client
     pcall(function() send_to_client(ctx, "close") end)
-    pcall(function() if ctx.backends.leader.wb then ctx.backends.leader.wb:send_close() end end)
-    pcall(function() if ctx.backends.follower.wb then ctx.backends.follower.wb:send_close() end end)
 end
 
 -- ============================================================================
