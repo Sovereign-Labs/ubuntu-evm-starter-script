@@ -75,6 +75,7 @@ end
 -- JSON-RPC subscription costs (Infura-style pricing model)
 M.SUBSCRIBE_COST = 5                    -- Cost for eth_subscribe/eth_unsubscribe call
 M.JSONRPC_PUSHED_EVENT_COST = 80        -- Cost per eth_subscription event pushed from backend
+M.INVALID_REQUEST_COST = 5              -- Cost for invalid requests (parse error, missing method)
 
 -- ============================================================================
 -- REST ENDPOINT CONFIGURATION
@@ -616,6 +617,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
             for p, c in utf8.codes(data) do end
         end)
         if not valid_utf8 then
+            M.apply_rate_limit(ctx.client_ip, M.INVALID_REQUEST_COST, ctx.is_exempt)
             send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Binary frame must contain valid UTF-8"},"id":null}')
             return true  -- continue
         end
@@ -625,6 +627,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
     -- Parse JSON-RPC request (id for error responses, method for routing)
     local id, method = parse_jsonrpc_request(text_data)
     if not method then
+        M.apply_rate_limit(ctx.client_ip, M.INVALID_REQUEST_COST, ctx.is_exempt)
         send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
         return true  -- continue
     end
@@ -875,7 +878,7 @@ function M.handle_http_request(uri, http_method)
             end
         end
         if not body then
-            -- Return -32700 Parse error
+            M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
             ngx.status = 400
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}')
             return ngx.exit(400)
@@ -883,7 +886,7 @@ function M.handle_http_request(uri, http_method)
         -- Parse JSON-RPC request (id for error responses, method for routing)
         jsonrpc_id, jsonrpc_method = parse_jsonrpc_request(body)
         if not jsonrpc_method then
-            -- Return -32600 Invalid Request
+            M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
             ngx.status = 400
             ngx.say('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. jsonrpc_id .. '}')
             return ngx.exit(400)

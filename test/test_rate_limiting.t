@@ -1858,3 +1858,24 @@ GET /test-client-disconnect-cleanup
 --- response_body_like: ^OK:cleanup completed in
 --- error_code: 200
 --- timeout: 5
+
+
+
+=== TEST 48: Invalid requests consume rate limit tokens (HTTP)
+Invalid JSON-RPC requests (missing method) should still cost tokens (5 each).
+With bucket=90: normally one valid request (cost=80) would succeed.
+But after 3 invalid requests (3*5=15), only 75 tokens remain, so valid request fails.
+--- http_config eval
+my $config = $::HttpConfigBase;
+$config =~ s/(init_by_lua_block \{)/$1\n        BUCKET_CAPACITY = 90\n        REFILL_RATE = 0/;
+return $config;
+--- config eval: $::LocationConfig
+--- pipelined_requests eval
+[
+    "POST /rpc\n" . '{"jsonrpc":"2.0","id":1}',
+    "POST /rpc\n" . '{"jsonrpc":"2.0","id":2}',
+    "POST /rpc\n" . '{"jsonrpc":"2.0","id":3}',
+    "POST /rpc\n" . '{"jsonrpc":"2.0","method":"test_follower_read","params":[],"id":4}'
+]
+--- error_code eval
+[400, 400, 400, 429]
