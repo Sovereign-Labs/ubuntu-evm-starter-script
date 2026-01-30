@@ -863,24 +863,13 @@ function M.handle_http_request(uri, http_method)
     local cost, use_leader, jsonrpc_method, jsonrpc_id
 
     if uri == "/rpc" and http_method == "POST" then
-        -- JSON-RPC request
+        -- JSON-RPC request (body size enforced by client_max_body_size)
         ngx.req.read_body()
         local body = ngx.req.get_body_data()
         if not body then
-            -- Body may be in temp file if larger than client_body_buffer_size
-            local file = ngx.req.get_body_file()
-            if file then
-                local f = io.open(file, "r")
-                if f then
-                    body = f:read("*a")
-                    f:close()
-                end
-            end
-        end
-        if not body then
             M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
             ngx.status = 400
-            ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty body"},"id":null}')
+            ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error: Empty or invalid body"},"id":null}')
             return ngx.exit(400)
         end
         -- Parse JSON-RPC request (id for error responses, method for routing)
