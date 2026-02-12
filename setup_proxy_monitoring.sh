@@ -147,6 +147,10 @@ cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
   interval = "10s"
   hostname = "$INSTANCE_ID"
 
+[[inputs.socket_listener]]
+  service_address = "udp4://127.0.0.1:8094"
+  data_format = "influx"
+
 [[inputs.nginx_vts]]
   urls = ["http://127.0.0.1:8080/vts_status/format/json"]
 
@@ -161,7 +165,8 @@ cat > /etc/telegraf/telegraf.conf << TELEGRAF_EOF
   percpu = true
   totalcpu = true
   collect_cpu_time = false
-  report_active = falsecore_tags = false
+  report_active = false
+  core_tags = false
 [[inputs.mem]]
 
 # Storage
