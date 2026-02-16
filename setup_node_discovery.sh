@@ -4,7 +4,7 @@
 #
 # This script builds the node-discovery binary from the rollup-starter repository
 # and sets it up as a systemd service. The service queries a PostgreSQL database
-# for cluster information and writes it to a file that nginx can serve.
+# for cluster backends and writes Lua output consumed by nginx init_by_lua_file.
 #
 # Usage:
 #   ./setup_node_discovery.sh <branch_name> <db_secret_arn> <region> <db_host> <db_port> <db_name>
@@ -44,7 +44,7 @@ export HOME=/root
 ROLLUP_STARTER_REPO="https://github.com/Sovereign-Labs/rollup-starter"
 ROLLUP_STARTER_DIR="$HOME/rollup-starter"
 NODE_DISCOVERY_CRATE_MANIFEST="${ROLLUP_STARTER_DIR}/crates/utils/node-discovery/Cargo.toml"
-OUTPUT_FILE="/usr/local/openresty/nginx/conf/cluster_info.txt"
+OUTPUT_FILE="/usr/local/openresty/nginx/conf/backends.generated.lua"
 
 if ! command -v git >/dev/null 2>&1; then
    echo "Installing git..."
