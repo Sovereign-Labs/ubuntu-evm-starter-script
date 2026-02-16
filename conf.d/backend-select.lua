@@ -1,5 +1,25 @@
 local _M = {}
 
+local function is_empty(value)
+    return not value or value == ""
+end
+
+local function pick_backend(use_leader, backend_cache)
+    local backend
+    if use_leader then
+        backend = backend_cache:get("leader")
+    else
+        backend = backend_cache:get("follower_1")
+        if is_empty(backend) then
+            backend = backend_cache:get("leader")
+        end
+    end
+    return backend
+end
+
+-- Exposed for unit tests.
+_M.pick_backend = pick_backend
+
 function _M.select(path)
     local method = ngx.var.request_method
     local backend_cache = ngx.shared.backend_cache
@@ -32,13 +52,17 @@ function _M.select(path)
     end
 
     -- Select backend based on routing decision
-    if use_leader then
-        ngx.var.backend = backend_cache:get("leader") or "{{ROLLUP_LEADER_IP}}:12346"
-    else
-        ngx.var.backend = backend_cache:get("follower") or
-                         backend_cache:get("leader") or
-                         "{{ROLLUP_FOLLOWER_IP}}:12346"
+    local backend = pick_backend(use_leader, backend_cache)
+
+    if is_empty(backend) then
+        ngx.log(ngx.ERR, "backend not available in cache")
+        ngx.status = 503
+        ngx.header["Content-Type"] = "text/plain"
+        ngx.say("backend unavailable")
+        return ngx.exit(ngx.status)
     end
+
+    ngx.var.backend = backend
 end
 
 return _M
