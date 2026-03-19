@@ -19,6 +19,7 @@ $HttpConfigBase =~ s/__PROJECT_DIR__/$project_dir/g;
 
 # Location configs via include (uses same files as production)
 our $LocationConfig = qq{
+    include $project_dir/conf.d/common-locations.conf;
     include $project_dir/conf.d/websocket-proxy.conf;
     include $project_dir/conf.d/http-proxy.conf;
 };
@@ -58,6 +59,7 @@ $HttpConfigWithApiKey .= qq{
 # Location config requiring API key
 our $LocationConfigWithApiKey = qq{
     set \$require_api_key 1;
+    include $::project_dir/conf.d/common-locations.conf;
     include $::project_dir/conf.d/api-key-locations.conf;
     include $::project_dir/conf.d/websocket-proxy.conf;
     include $::project_dir/conf.d/http-proxy.conf;
@@ -66,6 +68,7 @@ our $LocationConfigWithApiKey = qq{
 # Location config NOT requiring API key (public)
 our $LocationConfigPublic = qq{
     set \$require_api_key 0;
+    include $::project_dir/conf.d/common-locations.conf;
     include $::project_dir/conf.d/websocket-proxy.conf;
     include $::project_dir/conf.d/http-proxy.conf;
 };
@@ -83,6 +86,7 @@ $HttpConfigWithNginxVars .= qq{
 our $LocationConfigCustomRateLimits = qq{
     set \$bucket_capacity 2;
     set \$refill_rate 1;
+    include $project_dir/conf.d/common-locations.conf;
     include $project_dir/conf.d/websocket-proxy.conf;
     include $project_dir/conf.d/http-proxy.conf;
 };
@@ -252,7 +256,7 @@ return $config;
 --- http_config eval: $::HttpConfigExempt
 --- config eval: $::LocationConfig
 --- request
-GET /health
+GET /rollup/schema
 --- raw_response_headers_unlike: X-RateLimit-Cost
 --- error_code: 200
 
@@ -262,7 +266,7 @@ GET /health
 --- http_config eval: $::HttpConfigLargeBucket
 --- config eval: $::LocationConfig
 --- request
-GET /health
+GET /rollup/schema
 --- response_headers_like
 X-RateLimit-Cost: \d+
 X-RateLimit-Remaining: \d+
@@ -1865,3 +1869,163 @@ return $config;
     qr/Missing method/,
     qr/Rate limit exceeded/
 ]
+
+
+
+=== TEST 49: /health stays on the local utility location
+The catch-all proxy location must not override the local health endpoint.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+GET /health
+--- response_body eval
+"healthy\n"
+--- raw_response_headers_unlike: X-Backend
+--- error_code: 200
+
+
+
+=== TEST 50: ACME challenge path is not proxied
+Without a challenge file present, nginx should serve a local 404 instead of proxying.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+GET /.well-known/acme-challenge/test-token
+--- error_code: 404
+--- response_body_unlike: backend
+
+
+
+=== TEST 51: Root path POST preserves /rpc compatibility
+POST / should be treated like POST /rpc for JSON-RPC clients that target the bare root path.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /
+{"jsonrpc":"2.0","method":"test_leader_write","params":[],"id":1}
+--- response_body chomp
+{"backend":"leader"}
+--- response_headers
+X-Backend: leader
+--- error_code: 200
+
+
+
+=== TEST 52: Malformed HTTP JSON-RPC returns parse error
+Malformed JSON must return -32700 instead of the missing-method error.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval: $::LocationConfig
+--- request
+POST /rpc
+{"jsonrpc":"2.0","method":
+--- error_code: 200
+--- response_body
+{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}
+
+
+
+=== TEST 53: Malformed WebSocket JSON-RPC returns parse error
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-ws-parse-error {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 3000 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                wb:send_text("not-json")
+
+                local data, typ, recv_err = wb:recv_frame()
+                if typ == "text" and data and data:match('"code":%-32700') then
+                    ngx.say("PASS: parse error returned")
+                else
+                    ngx.say("FAIL: unexpected response " .. tostring(typ) .. " " .. tostring(data or recv_err))
+                end
+
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-ws-parse-error
+--- response_body
+PASS: parse error returned
+--- error_code: 200
+--- timeout: 5
+
+
+
+=== TEST 54: Client ping after mixed routing produces only one pong
+When both leader and follower sockets are open, a client ping should follow the
+most recently used backend instead of producing duplicate pongs.
+--- http_config eval: $::HttpConfigLargeBucket
+--- config eval
+qq{
+$::LocationConfig
+
+        location ^~ /test-client-ping-mixed {
+            content_by_lua_block {
+                local client = require "resty.websocket.client"
+                local wb, err = client:new{ timeout = 500 }
+                if not wb then
+                    ngx.say("ERR:create:", err)
+                    return
+                end
+
+                local ok, err = wb:connect("ws://127.0.0.1:" .. ngx.var.server_port .. "/rpc")
+                if not ok then
+                    ngx.say("ERR:connect:", err)
+                    return
+                end
+
+                wb:send_text('{"jsonrpc":"2.0","method":"test_leader_write","id":1}')
+                local data1, typ1 = wb:recv_frame()
+                if not data1 or typ1 ~= "text" then
+                    ngx.say("FAIL: leader setup failed")
+                    return
+                end
+
+                wb:send_text('{"jsonrpc":"2.0","method":"test_follower_read","id":2}')
+                local data2, typ2 = wb:recv_frame()
+                if not data2 or typ2 ~= "text" then
+                    ngx.say("FAIL: follower setup failed")
+                    return
+                end
+
+                wb:send_ping("mixed-ping-data")
+
+                local pong1, pong_typ1, err1 = wb:recv_frame()
+                if pong_typ1 ~= "pong" or pong1 ~= "mixed-ping-data-from-follower" then
+                    ngx.say("FAIL: first pong was " .. tostring(pong_typ1) .. " " .. tostring(pong1 or err1))
+                    return
+                end
+
+                local pong2, pong_typ2, err2 = wb:recv_frame()
+                if pong_typ2 == "pong" then
+                    ngx.say("FAIL: duplicate pong " .. tostring(pong2))
+                    return
+                end
+
+                ngx.say("PASS: one pong from the most recent backend")
+                wb:send_close()
+            }
+        }
+}
+--- request
+GET /test-client-ping-mixed
+--- response_body
+PASS: one pong from the most recent backend
+--- error_code: 200
+--- timeout: 5

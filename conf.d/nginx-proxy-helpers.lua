@@ -251,18 +251,18 @@ end
 
 -- Parse JSON-RPC request and extract id and method.
 -- Uses cjson to correctly handle escaped quotes and special characters.
--- Returns: id (JSON-encoded string for responses), method (string or nil)
+-- Returns: id (JSON-encoded string for responses), method (string or nil), err
 -- If JSON parsing fails or id is missing/null, id defaults to "null".
 local function parse_jsonrpc_request(text)
     local parsed = cjson.decode(text)
     if not parsed then
-        return "null", nil
+        return "null", nil, "parse_error"
     end
     local id = "null"
     if parsed.id ~= nil and parsed.id ~= cjson.null then
         id = cjson.encode(parsed.id)
     end
-    return id, parsed.method
+    return id, parsed.method, nil
 end
 
 -- ============================================================================
@@ -281,28 +281,14 @@ local function parse_bucket_state(value)
     return tonumber(tokens_str), tonumber(last_str)
 end
 
--- Load bucket state from current packed format or the legacy split-key format.
-local function load_bucket_state(buckets, bucket_key, legacy_last_refill_key, current_time)
+-- Load bucket state from the packed "tokens:timestamp" format.
+local function load_bucket_state(buckets, bucket_key)
     local raw = buckets:get(bucket_key)
-    local tokens, last_refill = parse_bucket_state(raw)
-    if tokens and last_refill then
-        return tokens, last_refill
-    end
-
-    if type(raw) == "number" then
-        tokens = raw
-        last_refill = buckets:get(legacy_last_refill_key)
-        if type(last_refill) ~= "number" then
-            last_refill = current_time
-        end
-        return tokens, last_refill
-    end
-
-    return nil, nil
+    return parse_bucket_state(raw)
 end
 
 -- Store bucket state as packed string, returns ok, err
-local function store_bucket_state(buckets, bucket_key, legacy_last_refill_key, tokens, last_refill)
+local function store_bucket_state(buckets, bucket_key, tokens, last_refill)
     local state = tostring(tokens) .. ":" .. tostring(last_refill)
     local ok, err, forcible = buckets:set(bucket_key, state, M.BUCKET_TTL_SEC)
     if not ok then
@@ -312,7 +298,6 @@ local function store_bucket_state(buckets, bucket_key, legacy_last_refill_key, t
     if forcible then
         ngx.log(ngx.WARN, "token bucket state evicted: ", bucket_key)
     end
-    buckets:delete(legacy_last_refill_key)
     return true
 end
 
@@ -352,7 +337,6 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     if bucket_tier and bucket_tier ~= "" then
         bucket_key = bucket_key .. ":" .. bucket_tier
     end
-    local legacy_last_refill_key = "refill:" .. client_ip
 
     -- Create lock object in a dedicated shared dict.
     local lock, err = resty_lock:new(M.LOCKS_SHDICT, {
@@ -371,7 +355,7 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     end
 
     -- Read and refill tokens from packed format
-    local tokens, last_refill = load_bucket_state(buckets, bucket_key, legacy_last_refill_key, current_time)
+    local tokens, last_refill = load_bucket_state(buckets, bucket_key)
 
     if tokens == nil then
         -- First request from this IP: initialize with full bucket
@@ -399,7 +383,7 @@ function M.apply_rate_limit(client_ip, cost, is_exempt)
     end
 
     -- Always persist state (refreshes TTL even for rate-limited requests)
-    local ok = store_bucket_state(buckets, bucket_key, legacy_last_refill_key, tokens, current_time)
+    local ok = store_bucket_state(buckets, bucket_key, tokens, current_time)
 
     -- Release lock
     lock:unlock()
@@ -600,6 +584,7 @@ function M.backend_to_client(ctx, backend_entry, backend_name)
             end
         elseif typ == "ping" then
             -- Forward ping to client so backend can manage connection liveness
+            ctx.pending_backend_ping_name = backend_name
             send_to_client(ctx, "ping", data)
         elseif typ == "pong" then
             -- Forward pong to client (response to proxy-initiated ping, if any)
@@ -700,7 +685,12 @@ local function handle_jsonrpc_message(ctx, data, typ)
     end
 
     -- Parse JSON-RPC request (id for error responses, method for routing)
-    local id, method = parse_jsonrpc_request(text_data)
+    local id, method, parse_err = parse_jsonrpc_request(text_data)
+    if parse_err then
+        M.apply_rate_limit(ctx.client_ip, M.INVALID_REQUEST_COST, ctx.is_exempt)
+        send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}')
+        return true  -- continue
+    end
     if not method then
         M.apply_rate_limit(ctx.client_ip, M.INVALID_REQUEST_COST, ctx.is_exempt)
         send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Missing method"},"id":' .. id .. '}')
@@ -726,6 +716,7 @@ local function handle_jsonrpc_message(ctx, data, typ)
         send_to_client(ctx, "text", '{"jsonrpc":"2.0","error":{"code":-32603,"message":"Backend unavailable"},"id":' .. id .. '}')
         return false  -- break
     end
+    ctx.last_client_backend_name = backend_name
 
     local send_ok, send_err
     if typ == "text" then
@@ -760,6 +751,7 @@ local function handle_rest_ws_message(ctx, data, typ)
         send_to_client(ctx, "text", '{"error":"Backend unavailable"}')
         return false  -- break
     end
+    ctx.last_client_backend_name = ctx.endpoint_backend_name
 
     local send_ok, send_err
     if typ == "text" then
@@ -792,6 +784,7 @@ local function client_to_backend(ctx)
             ctx.closing = true
             return
         end
+        ctx.last_client_backend_name = ctx.endpoint_backend_name
     end
 
     while not ctx.closing do
@@ -807,28 +800,23 @@ local function client_to_backend(ctx)
             ctx.closing = true
             break
         elseif typ == "ping" then
-            -- Forward ping to all connected backends (backend will respond with pong)
-            -- If no backends connected yet, respond locally to maintain protocol
-            local forwarded = false
-            if ctx.backends.leader.wb then
-                ctx.backends.leader.wb:send_ping(data)
-                forwarded = true
-            end
-            if not ctx.is_single_backend and ctx.backends.follower.wb then
-                ctx.backends.follower.wb:send_ping(data)
-                forwarded = true
-            end
-            if not forwarded then
+            -- Forward client ping only to the most recently used backend.
+            -- If no backend is active yet, respond locally to maintain protocol.
+            local ping_backend_name = ctx.last_client_backend_name
+            local ping_backend = ping_backend_name and ctx.backends[ping_backend_name]
+            if ping_backend and ping_backend.wb then
+                ping_backend.wb:send_ping(data)
+            else
                 send_to_client(ctx, "pong", data)
             end
         elseif typ == "pong" then
-            -- Forward pong to all connected backends (for backend-managed keepalive)
-            if ctx.backends.leader.wb then
-                ctx.backends.leader.wb:send_pong(data)
+            -- Forward pong only to the backend that most recently pinged the client.
+            local pong_backend_name = ctx.pending_backend_ping_name
+            local pong_backend = pong_backend_name and ctx.backends[pong_backend_name]
+            if pong_backend and pong_backend.wb then
+                pong_backend.wb:send_pong(data)
             end
-            if not ctx.is_single_backend and ctx.backends.follower.wb then
-                ctx.backends.follower.wb:send_pong(data)
-            end
+            ctx.pending_backend_ping_name = nil
         elseif typ == "text" or typ == "binary" then
             local should_continue
             if ctx.is_jsonrpc then
@@ -893,7 +881,9 @@ function M.handle_websocket()
         closing = false,
         backend_threads = {},
         endpoint_backend_wb = nil,
-        endpoint_backend_name = nil
+        endpoint_backend_name = nil,
+        last_client_backend_name = nil,
+        pending_backend_ping_name = nil
     }
 
     -- Run main loop until client disconnects or error
@@ -933,12 +923,11 @@ function M.handle_http_request(uri, http_method)
     -- Normalize URI (remove trailing slash)
     uri = uri:gsub("/$", "")
 
-    local backend_cache = ngx.shared.backend_cache
     local client_ip = ngx.var.binary_remote_addr
     local is_exempt = (ngx.var.rate_limit_key == "1")
 
     -- Determine cost and routing based on request type
-    local cost, use_leader, jsonrpc_method, jsonrpc_id
+    local cost, use_leader, jsonrpc_method, jsonrpc_id, parse_err
 
     if uri == "/rpc" and http_method == "POST" then
         -- JSON-RPC request (body size enforced by client_max_body_size)
@@ -951,7 +940,12 @@ function M.handle_http_request(uri, http_method)
             return ngx.exit(200)
         end
         -- Parse JSON-RPC request (id for error responses, method for routing)
-        jsonrpc_id, jsonrpc_method = parse_jsonrpc_request(body)
+        jsonrpc_id, jsonrpc_method, parse_err = parse_jsonrpc_request(body)
+        if parse_err then
+            M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
+            ngx.say('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}')
+            return ngx.exit(200)
+        end
         if not jsonrpc_method then
             M.apply_rate_limit(client_ip, M.INVALID_REQUEST_COST, is_exempt)
             -- JSON-RPC: return 200 with error in body (tooling expects 200)
