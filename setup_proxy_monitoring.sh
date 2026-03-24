@@ -121,6 +121,27 @@ SYSTEMD_EOF
 
 systemctl daemon-reload
 
+# Set up logrotate for nginx logs to prevent unbounded growth
+# Logs are very compressible so 28 days of gzipped logs should be fine.
+# May need tuning on very high traffic systems
+cat > /etc/logrotate.d/nginx << 'LOGROTATE_EOF'
+/var/log/nginx/*.log {
+    daily
+    rotate 28
+    dateext
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        if [ -f /usr/local/openresty/nginx/logs/nginx.pid ]; then
+            kill -USR1 $(cat /usr/local/openresty/nginx/logs/nginx.pid)
+        fi
+    endscript
+}
+LOGROTATE_EOF
+
 echo "Installing Telegraf..."
 
 # Import InfluxData GPG key (exp2029 key for current packages)
