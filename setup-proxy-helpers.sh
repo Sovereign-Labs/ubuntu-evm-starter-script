@@ -102,8 +102,9 @@ apply_whitelists() {
 try_restore_certs() {
   CERT_RESTORED=false
   if [ -n "$DOMAIN_NAME" ] && [ -n "$CERT_BUCKET_NAME" ]; then
-    mkdir -p /etc/letsencrypt
-    if aws s3 sync "s3://$CERT_BUCKET_NAME/letsencrypt/" /etc/letsencrypt/ --region $REGION --quiet; then
+    if aws s3 cp "s3://$CERT_BUCKET_NAME/letsencrypt.tar.gz" /tmp/letsencrypt.tar.gz --region $REGION 2>/dev/null; then
+      tar xzf /tmp/letsencrypt.tar.gz -C /etc
+      rm -f /tmp/letsencrypt.tar.gz
       if [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ]; then
         if openssl x509 -checkend $((30*24*60*60)) -noout -in "/etc/letsencrypt/live/$DOMAIN_NAME/cert.pem" 2>/dev/null; then
           echo "Successfully restored valid certificate from S3"
@@ -135,7 +136,9 @@ provision_certificate() {
     if certbot certonly --webroot --webroot-path=/var/www/certbot --non-interactive --agree-tos --email info@sovlabs.io --domains $CERT_DOMAINS --keep-until-expiring; then
       echo "Certificate obtained successfully!"
       if [ -n "$CERT_BUCKET_NAME" ]; then
-        aws s3 sync /etc/letsencrypt/ "s3://$CERT_BUCKET_NAME/letsencrypt/" --region $REGION --quiet --exclude "*.log" --exclude "accounts/*"
+        tar czf /tmp/letsencrypt.tar.gz -C /etc letsencrypt --exclude='*.log'
+        aws s3 cp /tmp/letsencrypt.tar.gz "s3://$CERT_BUCKET_NAME/letsencrypt.tar.gz" --region $REGION
+        rm -f /tmp/letsencrypt.tar.gz
       fi
       [ -d "/etc/letsencrypt/live/$DOMAIN_NAME" ] && switch_to_https
     else
@@ -150,7 +153,9 @@ setup_cert_renewal() {
     mkdir -p /etc/letsencrypt/renewal-hooks/post
     cat > /etc/letsencrypt/renewal-hooks/post/upload-to-s3.sh << EOF
 #!/bin/bash
-aws s3 sync /etc/letsencrypt/ "s3://$CERT_BUCKET_NAME/letsencrypt/" --region $REGION --quiet --exclude "*.log" --exclude "accounts/*"
+tar czf /tmp/letsencrypt.tar.gz -C /etc letsencrypt --exclude='*.log'
+aws s3 cp /tmp/letsencrypt.tar.gz "s3://$CERT_BUCKET_NAME/letsencrypt.tar.gz" --region $REGION
+rm -f /tmp/letsencrypt.tar.gz
 systemctl reload openresty
 EOF
     chmod +x /etc/letsencrypt/renewal-hooks/post/upload-to-s3.sh
