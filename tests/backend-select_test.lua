@@ -47,6 +47,16 @@ local cases = {
         expected = "10.0.1.11:12346",
     },
     {
+        name = "follower route uses follower when present",
+        use_leader = false,
+        cache = {
+            leader = "10.0.1.10:12346",
+            follower = "10.0.1.12:12346",
+            follower_1 = "10.0.1.11:12346",
+        },
+        expected = "10.0.1.12:12346",
+    },
+    {
         name = "follower route falls back to leader when follower_1 is empty",
         use_leader = false,
         cache = {

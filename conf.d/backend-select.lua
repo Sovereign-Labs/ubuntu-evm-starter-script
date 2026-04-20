@@ -9,7 +9,10 @@ local function pick_backend(use_leader, backend_cache)
     if use_leader then
         backend = backend_cache:get("leader")
     else
-        backend = backend_cache:get("follower_1")
+        backend = backend_cache:get("follower")
+        if is_empty(backend) then
+            backend = backend_cache:get("follower_1")
+        end
         if is_empty(backend) then
             backend = backend_cache:get("leader")
         end
